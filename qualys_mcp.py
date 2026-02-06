@@ -25,7 +25,9 @@ BASE_URL = normalize_url(os.environ.get('QUALYS_BASE_URL', ''))
 GATEWAY_URL = normalize_url(os.environ.get('QUALYS_GATEWAY_URL', ''))
 BASIC_AUTH = base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
 BEARER_TOKEN = None
-
+KB_CACHE = {}
+DETECTION_CACHE = {}
+DETECTION_CACHE_TIME = None
 
 AUTH_ERROR = None
 
@@ -61,8 +63,19 @@ def api_get(url, gateway=False, timeout=30):
         return None
 
 
-def get_detections(severity=5, limit=500):
-    data = api_get(f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list&severities={severity}&truncation_limit={limit}&status=Active")
+def get_detections(severity=5, limit=200, use_cache=True):
+    """Get VMDR detections. Uses 60-second cache by default."""
+    global DETECTION_CACHE, DETECTION_CACHE_TIME
+
+    cache_key = f"{severity}_{limit}"
+    now = datetime.utcnow()
+
+    if use_cache and cache_key in DETECTION_CACHE and DETECTION_CACHE_TIME:
+        age = (now - DETECTION_CACHE_TIME).total_seconds()
+        if age < 60:
+            return DETECTION_CACHE[cache_key]
+
+    data = api_get(f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list&severities={severity}&truncation_limit={limit}&status=Active", timeout=90)
     if not data:
         return []
     dets = []
@@ -75,10 +88,29 @@ def get_detections(severity=5, limit=500):
                             'severity': int(d.findtext('SEVERITY', '0')), 'status': d.findtext('STATUS', '')})
     except:
         pass
+
+    DETECTION_CACHE[cache_key] = dets
+    DETECTION_CACHE_TIME = now
     return dets
 
 
+def parse_vuln_xml(v):
+    """Parse a VULN XML element into a dict"""
+    qid = int(v.findtext('QID', '0'))
+    return {
+        'qid': qid,
+        'title': v.findtext('TITLE', ''),
+        'severity': int(v.findtext('SEVERITY_LEVEL', '0')),
+        'cves': [c.findtext('ID', '') for c in v.findall('.//CVE_LIST/CVE')],
+        'solution': v.findtext('SOLUTION', ''),
+        'patch_available': v.findtext('PATCHABLE', '0') == '1'
+    }
+
+
 def get_kb(qid):
+    """Get KB entry for a single QID (uses cache)"""
+    if qid in KB_CACHE:
+        return KB_CACHE[qid]
     data = api_get(f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&ids={qid}")
     if not data:
         return None
@@ -87,11 +119,33 @@ def get_kb(qid):
         v = root.find('.//VULN')
         if v is None:
             return None
-        return {'qid': qid, 'title': v.findtext('TITLE', ''), 'severity': int(v.findtext('SEVERITY_LEVEL', '0')),
-                'cves': [c.findtext('ID', '') for c in v.findall('.//CVE_LIST/CVE')],
-                'solution': v.findtext('SOLUTION', ''), 'patch_available': v.findtext('PATCHABLE', '0') == '1'}
+        result = parse_vuln_xml(v)
+        KB_CACHE[qid] = result
+        return result
     except:
         return None
+
+
+def get_kb_batch(qids):
+    """Get KB entries for multiple QIDs in one API call (uses cache)"""
+    if not qids:
+        return {}
+
+    uncached = [q for q in qids if q not in KB_CACHE]
+
+    if uncached:
+        ids_str = ','.join(map(str, uncached[:50]))
+        data = api_get(f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&ids={ids_str}", timeout=60)
+        if data:
+            try:
+                root = ET.fromstring(data)
+                for v in root.findall('.//VULN'):
+                    parsed = parse_vuln_xml(v)
+                    KB_CACHE[parsed['qid']] = parsed
+            except:
+                pass
+
+    return {q: KB_CACHE.get(q) for q in qids}
 
 
 def get_cve_qids(cve):
@@ -377,7 +431,7 @@ def get_weekly_priorities(limit: int = 10) -> dict:
     result = {'summary': {'totalCritical': 0, 'assetsAffected': 0, 'containersAtRisk': 0, 'patchable': 0},
               'priorities': [], 'byEffort': {'patch': 0, 'config': 0, 'upgrade': 0}}
 
-    dets = get_detections(5, 500)
+    dets = get_detections(5, 200)
     qids = {}
     hosts = set()
     for d in dets:
@@ -388,8 +442,11 @@ def get_weekly_priorities(limit: int = 10) -> dict:
         qids[qid]['hosts'].add(d['host_id'])
         hosts.add(d['host_id'])
 
-    for i, (qid, data) in enumerate(sorted(qids.items(), key=lambda x: (x[1]['sev'], len(x[1]['hosts'])), reverse=True)[:limit]):
-        kb = get_kb(qid)
+    top_qids = sorted(qids.items(), key=lambda x: (x[1]['sev'], len(x[1]['hosts'])), reverse=True)[:limit]
+    kb_data = get_kb_batch([q[0] for q in top_qids])
+
+    for i, (qid, data) in enumerate(top_qids):
+        kb = kb_data.get(qid)
         patch = kb.get('patch_available', False) if kb else False
         result['byEffort']['patch' if patch else 'config'] += 1
         if patch:
@@ -400,8 +457,8 @@ def get_weekly_priorities(limit: int = 10) -> dict:
             'effort': 'patch' if patch else 'config', 'fix': (kb.get('solution', '') if kb else '')[:100]
         })
 
-    vuln_imgs = {img.get('imageId') for img in get_images(100, 5)}
-    at_risk = [c for c in get_containers(500) if c.get('imageId') in vuln_imgs]
+    vuln_imgs = {img.get('imageId') for img in get_images(50, 5)}
+    at_risk = [c for c in get_containers(100) if c.get('imageId') in vuln_imgs]
     if at_risk:
         result['priorities'].append({'rank': len(result['priorities']) + 1, 'title': 'Vulnerable containers',
                                      'containers': len(at_risk), 'effort': 'upgrade'})
@@ -462,10 +519,10 @@ def get_security_posture() -> dict:
         result['errors'].append('vulns')
 
     try:
-        imgs = get_images(100)
+        imgs = get_images(50)
         result['containers']['total'] = len(imgs)
-        vuln_ids = {i.get('imageId') for i in get_images(50, 5)}
-        result['containers']['atRisk'] = len([c for c in get_containers(100) if c.get('imageId') in vuln_ids])
+        vuln_ids = {i.get('imageId') for i in get_images(30, 5)}
+        result['containers']['atRisk'] = len([c for c in get_containers(50) if c.get('imageId') in vuln_ids])
     except:
         result['errors'].append('containers')
 
@@ -476,7 +533,7 @@ def get_security_posture() -> dict:
                 result['cloud']['accounts'] += len(conns)
                 acc = conns[0].get('awsAccountId') or conns[0].get('azureSubscriptionId') or conns[0].get('gcpProjectId')
                 if acc:
-                    evals = get_evaluations(acc, p, 100)
+                    evals = get_evaluations(acc, p, 50)
                     result['cloud']['failedControls'] += len([e for e in evals if e.get('result') in ['FAIL', 'FAILED']])
     except:
         result['errors'].append('cloud')
@@ -492,20 +549,24 @@ def get_patch_status(limit: int = 20) -> dict:
     """Get patching coverage - how many assets need patches and which patches are most common."""
     result = {'coverage': 0, 'assetsTotal': 0, 'assetsNeedPatches': 0, 'topMissing': []}
 
-    assets = get_assets(500)
+    assets = get_assets(200)
     result['assetsTotal'] = len(assets)
 
-    dets = get_detections(5, 500)
-    qids = {}
+    dets = get_detections(5, 200)
+
+    unique_qids = list(set(d['qid'] for d in dets))
+    kb_data = get_kb_batch(unique_qids)
+
+    qid_counts = {}
     for d in dets:
-        kb = get_kb(d['qid'])
+        kb = kb_data.get(d['qid'])
         if kb and kb.get('patch_available'):
-            qids[d['qid']] = qids.get(d['qid'], 0) + 1
+            qid_counts[d['qid']] = qid_counts.get(d['qid'], 0) + 1
 
-    result['topMissing'] = [{'qid': q, 'count': c, 'title': (get_kb(q) or {}).get('title', '')}
-                           for q, c in sorted(qids.items(), key=lambda x: x[1], reverse=True)[:limit]]
+    top_qids = sorted(qid_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    result['topMissing'] = [{'qid': q, 'count': c, 'title': kb_data.get(q, {}).get('title', '')} for q, c in top_qids]
 
-    hosts_need = set(d['host_id'] for d in dets if d['qid'] in qids)
+    hosts_need = set(d['host_id'] for d in dets if d['qid'] in qid_counts)
     result['assetsNeedPatches'] = len(hosts_need)
     if result['assetsTotal']:
         result['coverage'] = round((result['assetsTotal'] - len(hosts_need)) / result['assetsTotal'] * 100, 1)
@@ -575,16 +636,18 @@ def get_asset_risk(asset_id: str) -> dict:
     """Get risk summary for a specific asset - risk score, top vulnerabilities, and remediation."""
     result = {'assetId': asset_id, 'riskScore': 0, 'vulns': []}
 
-    for a in get_assets(500):
+    for a in get_assets(200):
         if str(a.get('assetId')) == str(asset_id):
             result['ip'] = a.get('address', '')
             result['hostname'] = a.get('dnsName', '')
             result['riskScore'] = int(a.get('assetRiskScore', 0))
             break
 
-    for d in get_detections(4, 500):
-        if d['host_id'] == asset_id and len(result['vulns']) < 10:
-            kb = get_kb(d['qid'])
+    asset_dets = [d for d in get_detections(4, 200) if d['host_id'] == asset_id][:10]
+    if asset_dets:
+        kb_data = get_kb_batch([d['qid'] for d in asset_dets])
+        for d in asset_dets:
+            kb = kb_data.get(d['qid'])
             result['vulns'].append({'qid': d['qid'], 'title': kb['title'] if kb else '', 'severity': d['severity']})
 
     return result
@@ -879,6 +942,32 @@ def get_webapp_vulns(severity: int = 4, limit: int = 50) -> dict:
     result['stats']['webApps'] = len(webapp_vulns)
     result['vulns'] = sorted(result['vulns'], key=lambda x: x['severity'], reverse=True)[:limit]
     result['byWebApp'] = sorted(webapp_vulns.values(), key=lambda x: (x['critical'], x['high'], x['total']), reverse=True)[:20]
+    return result
+
+
+@mcp.tool()
+def cache_status(clear: bool = False) -> dict:
+    """Show cache stats or clear all caches. Use clear=True to reset caches."""
+    global DETECTION_CACHE_TIME
+
+    result = {
+        'kb_entries': len(KB_CACHE),
+        'detection_entries': len(DETECTION_CACHE),
+        'detection_cache_age_seconds': None
+    }
+
+    if DETECTION_CACHE_TIME:
+        result['detection_cache_age_seconds'] = int((datetime.utcnow() - DETECTION_CACHE_TIME).total_seconds())
+
+    if clear:
+        KB_CACHE.clear()
+        DETECTION_CACHE.clear()
+        DETECTION_CACHE_TIME = None
+        result['cleared'] = True
+        result['kb_entries'] = 0
+        result['detection_entries'] = 0
+        result['detection_cache_age_seconds'] = None
+
     return result
 
 
