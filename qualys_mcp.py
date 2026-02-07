@@ -182,6 +182,14 @@ def get_host_detections(host_id, severity=4, days=30):
 def parse_vuln_xml(v):
     """Parse a VULN XML element into a dict"""
     qid = int(v.findtext('QID', '0'))
+    # Extract threat intelligence / RTI tags
+    threat_intel = []
+    ti = v.find('THREAT_INTELLIGENCE')
+    if ti is not None:
+        for t in ti.findall('THREAT_INTEL'):
+            text = (t.text or '').strip()
+            if text:
+                threat_intel.append(text)
     return {
         'qid': qid,
         'title': v.findtext('TITLE', ''),
@@ -189,7 +197,9 @@ def parse_vuln_xml(v):
         'cves': [c.findtext('ID', '') for c in v.findall('.//CVE_LIST/CVE')],
         'solution': v.findtext('SOLUTION', ''),
         'diagnosis': v.findtext('DIAGNOSIS', ''),
-        'patch_available': v.findtext('PATCHABLE', '0') == '1'
+        'patch_available': v.findtext('PATCHABLE', '0') == '1',
+        'threat_intel': threat_intel,
+        'ransomware': 'Ransomware' in threat_intel,
     }
 
 
@@ -552,15 +562,21 @@ def get_weekly_priorities(limit: int = 10) -> dict:
     result = {'summary': {}, 'priorities': [], 'topRiskAssets': []}
 
     # All fast CSAM v2 queries (~0.2-3s each, run in parallel)
+    # Search at multiple risk tiers to ensure we get the actual highest-risk assets
+    # (CSAM API doesn't sort results, so a broad >500 search may miss >900 assets)
     concurrent = _run_concurrent(
         total=lambda: csam_count(),
         risk_900=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "900"}]),
         risk_700=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "700"}]),
         risk_500=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}]),
         eol_count=lambda: csam_count([{"field": "operatingSystem.lifecycle.stage", "operator": "CONTAINS", "value": "EOL"}]),
-        high_risk=lambda: csam_search(
-            [{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}],
-            limit=limit * 2
+        assets_900=lambda: csam_search(
+            [{"field": "asset.truRisk", "operator": "GREATER", "value": "900"}],
+            limit=limit
+        ),
+        assets_700=lambda: csam_search(
+            [{"field": "asset.truRisk", "operator": "GREATER", "value": "700"}],
+            limit=limit
         ),
         vuln_imgs=lambda: get_images(50, 5),
         containers=lambda: get_containers(100),
@@ -580,8 +596,14 @@ def get_weekly_priorities(limit: int = 10) -> dict:
         'eolSystems': eol_count,
     }
 
-    # Top risk assets sorted by TruRisk
-    high_risk = concurrent.get('high_risk') or []
+    # Merge assets from multiple tiers, deduplicate, sort by risk
+    seen = set()
+    high_risk = []
+    for asset in (concurrent.get('assets_900') or []) + (concurrent.get('assets_700') or []):
+        aid = asset.get('assetId')
+        if aid and aid not in seen:
+            seen.add(aid)
+            high_risk.append(asset)
     high_risk.sort(key=lambda a: int(a.get('riskScore') or 0), reverse=True)
     for i, asset in enumerate(high_risk[:limit]):
         result['topRiskAssets'].append({
@@ -642,7 +664,8 @@ def investigate_cve(cve: str) -> dict:
     """Investigate if your environment is affected by a specific CVE. Returns QIDs, KB details, severity, and remediation. Fast (~5s)."""
     result = {'cve': cve, 'qids': [], 'severity': 0,
               'title': '', 'patchAvailable': False, 'solution': '',
-              'allKbDetails': [],
+              'allKbDetails': [], 'threatIntel': [],
+              'ransomware': False,
               'summary': {'qidCount': 0, 'patchAvailable': False}}
 
     # Step 1: CVE -> QIDs + KB data (KB API is fast, ~3s)
@@ -654,6 +677,7 @@ def investigate_cve(cve: str) -> dict:
         # Get KB details for all related QIDs
         kb_data = get_kb_batch(qids[:20])
         max_sev = 0
+        all_threat_intel = set()
         for qid in qids:
             kb = kb_data.get(qid)
             if kb:
@@ -665,14 +689,21 @@ def investigate_cve(cve: str) -> dict:
                     result['solution'] = kb.get('solution', '')[:500]
                     result['diagnosis'] = kb.get('diagnosis', '')[:300]
                     result['summary']['patchAvailable'] = kb.get('patch_available', False)
+                ti = kb.get('threat_intel', [])
+                all_threat_intel.update(ti)
+                if kb.get('ransomware'):
+                    result['ransomware'] = True
                 result['allKbDetails'].append({
                     'qid': qid,
                     'title': kb.get('title', ''),
                     'severity': kb.get('severity', 0),
                     'patchAvailable': kb.get('patch_available', False),
                     'cves': kb.get('cves', [])[:5],
+                    'threatIntel': ti,
+                    'ransomware': kb.get('ransomware', False),
                 })
 
+        result['threatIntel'] = sorted(all_threat_intel)
         result['allKbDetails'].sort(key=lambda x: x['severity'], reverse=True)
 
     return result
@@ -752,14 +783,19 @@ def get_patch_status(limit: int = 20) -> dict:
               'highRiskAssets': []}
 
     # All fast CSAM v2 queries (~0.2-3s each, run in parallel)
+    # Search at multiple risk tiers to ensure we get the actual highest-risk assets
     concurrent = _run_concurrent(
         total=lambda: csam_count(),
         risk_900=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "900"}]),
         risk_700=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "700"}]),
         risk_500=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}]),
         risk_100=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "100"}]),
-        top_risk=lambda: csam_search(
-            [{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}],
+        assets_900=lambda: csam_search(
+            [{"field": "asset.truRisk", "operator": "GREATER", "value": "900"}],
+            limit=limit
+        ),
+        assets_700=lambda: csam_search(
+            [{"field": "asset.truRisk", "operator": "GREATER", "value": "700"}],
             limit=limit
         ),
     )
@@ -778,8 +814,14 @@ def get_patch_status(limit: int = 20) -> dict:
         'low_under100': total - risk_100,
     }
 
-    # Top high-risk assets needing remediation
-    top_risk = concurrent.get('top_risk') or []
+    # Merge assets from multiple tiers, deduplicate, sort by risk
+    seen = set()
+    top_risk = []
+    for asset in (concurrent.get('assets_900') or []) + (concurrent.get('assets_700') or []):
+        aid = asset.get('assetId')
+        if aid and aid not in seen:
+            seen.add(aid)
+            top_risk.append(asset)
     top_risk.sort(key=lambda a: int(a.get('riskScore') or 0), reverse=True)
     for asset in top_risk[:limit]:
         result['highRiskAssets'].append({
@@ -799,6 +841,78 @@ def get_patch_status(limit: int = 20) -> dict:
 
 
 @mcp.tool()
+def get_threat_intel(threat_type: str = "", days: int = 30) -> dict:
+    """Get vulnerability threat intelligence from Qualys KB. Shows RTI (Real-Time Threat Indicator) breakdown for recently published vulnerabilities.
+    Optional threat_type filter: Ransomware, Malware, Active_Attacks, Exploit_Public, Easy_Exploit, Wormable, Cisa_Known_Exploited_Vulns, etc.
+    Default shows all RTI types for vulns published in last 30 days (~10s)."""
+    from datetime import timedelta
+    after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
+    result = {'days': days, 'threatFilter': threat_type or 'all',
+              'matchingVulns': [], 'totalVulns': 0, 'totalWithThreatIntel': 0,
+              'threatBreakdown': {}, 'summary': ''}
+
+    data = api_get(
+        f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&details=All"
+        f"&published_after={after}",
+        timeout=30
+    )
+    if not data:
+        result['summary'] = 'Failed to fetch KB data'
+        return result
+
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        result['summary'] = 'Failed to parse KB data'
+        return result
+
+    # Parse all vulns and collect threat intel
+    matching = []
+    threat_counts = {}
+    all_vulns = root.findall('.//VULN')
+    ti_count = 0
+    for v in all_vulns:
+        parsed = parse_vuln_xml(v)
+        KB_CACHE[parsed['qid']] = parsed
+        ti = parsed.get('threat_intel', [])
+        if ti:
+            ti_count += 1
+        for tag in ti:
+            threat_counts[tag] = threat_counts.get(tag, 0) + 1
+        # Filter by threat type if specified
+        if threat_type:
+            if any(threat_type.lower() in t.lower() for t in ti):
+                matching.append(parsed)
+        elif ti:
+            matching.append(parsed)
+
+    result['totalVulns'] = len(all_vulns)
+    result['totalWithThreatIntel'] = ti_count
+    result['threatBreakdown'] = dict(sorted(threat_counts.items(), key=lambda x: -x[1]))
+
+    # Sort by severity desc, return top entries
+    matching.sort(key=lambda x: (-x['severity'], -len(x.get('threat_intel', []))))
+    for v in matching[:50]:
+        result['matchingVulns'].append({
+            'qid': v['qid'],
+            'title': v['title'],
+            'severity': v['severity'],
+            'cves': v.get('cves', [])[:5],
+            'patchAvailable': v.get('patch_available', False),
+            'threatIntel': v.get('threat_intel', []),
+            'ransomware': v.get('ransomware', False),
+        })
+
+    filter_label = f"'{threat_type}'" if threat_type else 'any RTI'
+    patched = sum(1 for v in matching if v.get('patch_available'))
+    result['totalMatching'] = len(matching)
+    result['summary'] = (
+        f"{len(matching)} vulns with {filter_label} out of {len(all_vulns)} "
+        f"published in last {days} days. {patched} have patches available."
+    )
+    return result
+
+
 def get_compliance_gaps(limit: int = 20) -> dict:
     """Get top failing compliance controls that could fail audits."""
     result = {'passRate': 0, 'failingControls': 0, 'topFailing': []}
@@ -825,7 +939,6 @@ def get_compliance_gaps(limit: int = 20) -> dict:
     return result
 
 
-@mcp.tool()
 def get_cloud_risk(limit: int = 20) -> dict:
     """Get cloud security posture across AWS, Azure, GCP - accounts, failed controls, and threats."""
     result = {'accounts': [], 'failedControls': [], 'threats': [], 'stats': {'total': 0, 'critical': 0}}
@@ -918,7 +1031,6 @@ def get_tech_debt(limit: int = 100) -> dict:
     return result
 
 
-@mcp.tool()
 def get_image_vulns(image_id: str, limit: int = 50) -> dict:
     """Get vulnerabilities for a specific container image. Returns severity breakdown and top vulns."""
     result = {
@@ -962,7 +1074,6 @@ def get_image_vulns(image_id: str, limit: int = 50) -> dict:
     return result
 
 
-@mcp.tool()
 def get_expiring_certs(days: int = 30, limit: int = 50) -> dict:
     """Get SSL/TLS certificates expiring within specified days. Default 30 days."""
     result = {
@@ -1008,7 +1119,6 @@ def get_expiring_certs(days: int = 30, limit: int = 50) -> dict:
     return result
 
 
-@mcp.tool()
 def get_threats(days: int = 7, limit: int = 50) -> dict:
     """Get combined threat view from FIM (file integrity), EDR (endpoint), and CDR (cloud detection). Returns recent security events."""
     result = {
@@ -1070,7 +1180,6 @@ def get_threats(days: int = 7, limit: int = 50) -> dict:
     return result
 
 
-@mcp.tool()
 def get_webapp_vulns(severity: int = 4, limit: int = 50) -> dict:
     """Get web application vulnerabilities from WAS scans. Default severity 4+ (high/critical)."""
     result = {
@@ -1114,7 +1223,6 @@ def get_webapp_vulns(severity: int = 4, limit: int = 50) -> dict:
     return result
 
 
-@mcp.tool()
 def cache_status(clear: bool = False) -> dict:
     """Show cache stats or clear all caches. Use clear=True to reset caches."""
     global DETECTION_CACHE_TIME
