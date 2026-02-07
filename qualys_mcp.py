@@ -4,6 +4,7 @@
 import os
 import sys
 import json
+import ssl
 import base64
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, quote
@@ -35,6 +36,17 @@ DETECTION_CACHE_TIME = None
 
 AUTH_ERROR = None
 
+# SSL context for environments with self-signed certificates
+SSL_CTX = None
+if os.environ.get('QUALYS_SSL_VERIFY', '').lower() in ('0', 'false', 'no'):
+    SSL_CTX = ssl.create_default_context()
+    SSL_CTX.check_hostname = False
+    SSL_CTX.verify_mode = ssl.CERT_NONE
+
+def _open(req, timeout=30):
+    """urlopen wrapper that handles SSL context for self-signed certs."""
+    return urlopen(req, timeout=timeout, context=SSL_CTX)
+
 def _log(msg):
     """Log to stderr (visible in MCP server logs, not in protocol output)."""
     print(f"[qualys-mcp] {msg}", file=sys.stderr)
@@ -53,7 +65,7 @@ def get_bearer_token():
         auth_data = urlencode({'username': USERNAME, 'password': PASSWORD, 'token': 'true'}).encode()
         req = Request(f"{GATEWAY_URL}/auth", data=auth_data, method='POST')
         req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        with urlopen(req, timeout=30) as resp:
+        with _open(req, timeout=30) as resp:
             BEARER_TOKEN = resp.read().decode().strip()
             BEARER_TOKEN_TIME = datetime.now(timezone.utc)
             AUTH_ERROR = None
@@ -73,7 +85,7 @@ def api_get(url, gateway=False, timeout=30):
         req.add_header('Authorization', f'Basic {BASIC_AUTH}')
     req.add_header('X-Requested-With', 'qualys-mcp')
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with _open(req, timeout=timeout) as resp:
             return resp.read()
     except HTTPError as e:
         _log(f"API error {e.code}: {url.split('?')[0]}")
@@ -277,7 +289,7 @@ def csam_count(filters=None):
     req.add_header('Accept', 'application/json')
     req.add_header('X-Requested-With', 'qualys-mcp')
     try:
-        with urlopen(req, timeout=30) as resp:
+        with _open(req, timeout=30) as resp:
             return json.loads(resp.read()).get('count', 0)
     except Exception:
         return 0
@@ -299,7 +311,7 @@ def csam_search(filters=None, limit=100, fields=None):
     req.add_header('Accept', 'application/json')
     req.add_header('X-Requested-With', 'qualys-mcp')
     try:
-        with urlopen(req, timeout=30) as resp:
+        with _open(req, timeout=30) as resp:
             return json.loads(resp.read()).get('assetListData', {}).get('asset', [])
     except Exception as e:
         _log(f"csam_search error: {e}")
@@ -439,7 +451,7 @@ def get_was_findings(limit=100, severity=None):
     req.add_header('Content-Type', 'text/xml')
     req.add_header('X-Requested-With', 'qualys-mcp')
     try:
-        with urlopen(req, timeout=60) as resp:
+        with _open(req, timeout=60) as resp:
             root = ET.fromstring(resp.read())
             findings = []
             for f in root.findall('.//Finding'):
@@ -494,7 +506,7 @@ def fetch_all_eol(eol_type, limit=1000, max_pages=50):
         req.add_header('X-Requested-With', 'qualys-mcp')
 
         try:
-            with urlopen(req, timeout=30) as resp:
+            with _open(req, timeout=30) as resp:
                 data = json.loads(resp.read())
                 assets = data.get('assetListData', {}).get('asset', [])
                 if not assets:
