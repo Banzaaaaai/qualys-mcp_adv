@@ -927,6 +927,80 @@ def get_threat_intel(threat_type: str = "", days: int = 30) -> dict:
 
 
 @mcp.tool()
+def get_morning_report() -> dict:
+    """Daily security briefing - what happened overnight. Returns new vulnerabilities (last 24h) with ransomware/active exploit flags, environment health score, top risk assets, EOL count, and action items. Use this first thing in the morning or at shift start."""
+    result = {'report': 'Daily Security Briefing', 'environment': {},
+              'newVulns': {}, 'threats': {}, 'topRiskAssets': [],
+              'actionItems': []}
+
+    # Run everything concurrently for speed
+    concurrent = _run_concurrent(
+        posture=lambda: get_security_posture.fn(),
+        priorities=lambda: get_weekly_priorities.fn(),
+        new_vulns=lambda: get_new_vulns.fn(days=1),
+        ransomware=lambda: get_threat_intel.fn(threat_type='Ransomware', days=1),
+        active=lambda: get_threat_intel.fn(threat_type='Active_Attacks', days=1),
+        cisa=lambda: get_threat_intel.fn(threat_type='Cisa_Known_Exploited_Vulns', days=1),
+    )
+
+    # Environment status
+    posture = concurrent.get('posture') or {}
+    result['environment'] = {
+        'healthScore': posture.get('healthScore', 0),
+        'totalAssets': (posture.get('assets') or {}).get('total', 0),
+        'highRiskAssets': (posture.get('assets') or {}).get('highRisk', 0),
+        'eolSystems': (posture.get('vulns') or {}).get('eolSystems', 0),
+        'containersAtRisk': (posture.get('containers') or {}).get('atRisk', 0),
+        'cloudAccounts': (posture.get('cloud') or {}).get('accounts', 0),
+    }
+
+    # New vulns
+    new = concurrent.get('new_vulns') or {}
+    sb = new.get('severityBreakdown') or {}
+    result['newVulns'] = {
+        'total': new.get('totalVulns', 0),
+        'critical': sb.get('critical', 0),
+        'high': sb.get('high', 0),
+        'medium': sb.get('medium', 0),
+        'withPatch': new.get('withPatch', 0),
+        'withThreatIntel': new.get('withThreatIntel', 0),
+    }
+
+    # Threat flags
+    ransomware = concurrent.get('ransomware') or {}
+    active = concurrent.get('active') or {}
+    cisa = concurrent.get('cisa') or {}
+    result['threats'] = {
+        'ransomwareLinked': ransomware.get('totalMatching', 0),
+        'activelyExploited': active.get('totalMatching', 0),
+        'cisaKev': cisa.get('totalMatching', 0),
+    }
+
+    # Top critical new vulns
+    critical_new = []
+    for v in (new.get('vulns') or []):
+        if v['severity'] >= 5 and len(critical_new) < 10:
+            critical_new.append({
+                'qid': v['qid'],
+                'title': v['title'],
+                'cves': v.get('cves', [])[:3],
+                'patchAvailable': v.get('patchAvailable', False),
+                'threatIntel': v.get('threatIntel', []),
+                'ransomware': v.get('ransomware', False),
+            })
+    result['newVulns']['criticalVulns'] = critical_new
+
+    # Top risk assets
+    priorities = concurrent.get('priorities') or {}
+    result['topRiskAssets'] = (priorities.get('topRiskAssets') or [])[:5]
+
+    # Action items
+    result['actionItems'] = priorities.get('priorities') or []
+
+    return result
+
+
+@mcp.tool()
 def get_new_vulns(days: int = 7) -> dict:
     """Get newly published vulnerabilities from the Qualys Knowledge Base. Returns CVEs, severity, RTI threat tags, and patch status for vulns published in the last N days. Fast (~5s for 7 days). Use days=1 for today's vulns, days=30 for the last month."""
     after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')

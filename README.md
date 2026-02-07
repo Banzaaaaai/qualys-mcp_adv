@@ -1,6 +1,6 @@
 # Qualys MCP Server
 
-A lightweight MCP server that connects AI assistants to Qualys security data. **12 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
+A lightweight MCP server that connects AI assistants to Qualys security data. **13 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
 
 ## Setup
 
@@ -38,7 +38,13 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 
 ## Tools
 
-12 tools covering vulnerability management, threat intelligence, asset risk, cloud security, and containers.
+13 tools covering vulnerability management, threat intelligence, asset risk, cloud security, and containers.
+
+### Daily Operations
+
+| Tool | What it answers |
+|------|----------------|
+| `get_morning_report` | What happened overnight? New vulns, ransomware/exploit flags, top risks, action items |
 
 ### Security Posture & Priorities
 
@@ -76,6 +82,7 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 ## Example Conversations
 
 ```
+"What happened overnight?"                     → get_morning_report()
 "What new vulns came out this week?"           → get_new_vulns(days=7)
 "Show me Apache vulnerabilities"               → get_vulns_by_software("Apache")
 "Are we affected by Log4Shell?"                → investigate_cve("CVE-2021-44228")
