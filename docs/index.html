@@ -74,7 +74,7 @@
         }
 
         li::before {
-            content: "→";
+            content: "\2192";
             position: absolute;
             left: 0;
             color: #00d4ff;
@@ -136,7 +136,7 @@
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(3, 1fr);
             gap: 30px;
             margin: 40px 0;
         }
@@ -218,18 +218,6 @@
             font-size: 1.2rem;
         }
 
-        .architecture {
-            background: #1a1a2e;
-            border-radius: 16px;
-            padding: 40px;
-            font-family: monospace;
-            font-size: 1rem;
-            line-height: 1.4;
-            white-space: pre;
-            border: 1px solid #333;
-            overflow-x: auto;
-        }
-
         .arch-diagram {
             display: flex;
             flex-direction: column;
@@ -253,10 +241,6 @@
             background: linear-gradient(135deg, #0f3460, #1a1a2e);
         }
 
-        .arch-layer.gateway {
-            border-color: #7c3aed;
-        }
-
         .arch-layer.mcp {
             border-color: #00d4ff;
         }
@@ -270,10 +254,6 @@
             color: #00d4ff;
             font-size: 1.3rem;
             margin-bottom: 15px;
-        }
-
-        .arch-layer.gateway h4 {
-            color: #7c3aed;
         }
 
         .arch-components {
@@ -292,68 +272,49 @@
             border: 1px solid #333;
         }
 
-        .arch-modules {
-            display: grid;
-            grid-template-columns: repeat(6, 1fr);
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-
-        .arch-module {
-            background: #16213e;
-            padding: 12px 8px;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            color: #00d4ff;
-            border: 1px solid #333;
-            font-weight: 500;
-        }
-
-        .arch-workflow {
-            background: linear-gradient(135deg, #7c3aed33, #7c3aed22);
-            border: 1px solid #7c3aed;
-            padding: 12px 20px;
-            border-radius: 8px;
-            color: #fff;
-            font-weight: 500;
-        }
-
         .arch-arrow {
             color: #00d4ff;
             font-size: 1.5rem;
         }
 
-        .module-grid {
+        .tool-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 20px;
             margin: 30px 0;
         }
 
-        .module-card {
+        .tool-card {
             background: #1a1a2e;
             border-radius: 12px;
             padding: 25px;
             border: 1px solid #333;
-            text-align: center;
         }
 
-        .module-card .name {
-            font-size: 1.2rem;
+        .tool-card .name {
+            font-size: 1.1rem;
             font-weight: 600;
             color: #00d4ff;
             margin-bottom: 8px;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
         }
 
-        .module-card .count {
-            font-size: 2rem;
+        .tool-card .desc {
+            font-size: 1rem;
+            color: #888;
+        }
+
+        .tool-card.new {
+            border-color: #00ff88;
+        }
+
+        .tool-card.new .name::after {
+            content: " NEW";
+            color: #00ff88;
+            font-size: 0.7rem;
+            font-family: -apple-system, sans-serif;
             font-weight: 700;
-            color: #fff;
-        }
-
-        .module-card .label {
-            font-size: 0.9rem;
-            color: #666;
+            vertical-align: super;
         }
 
         .demo-box {
@@ -423,11 +384,6 @@
             border: 1px solid #333;
         }
 
-        .value-card .icon {
-            font-size: 2.5rem;
-            margin-bottom: 20px;
-        }
-
         .value-card h4 {
             font-size: 1.4rem;
             color: #fff;
@@ -468,7 +424,6 @@
         .badge.aws { border-color: #ff9900; color: #ff9900; }
         .badge.azure { border-color: #0089d6; color: #0089d6; }
         .badge.gcp { border-color: #4285f4; color: #4285f4; }
-        .badge.oci { border-color: #f80000; color: #f80000; }
 
         /* Mobile Navigation Buttons */
         .mobile-nav {
@@ -498,345 +453,85 @@
             color: #000;
         }
 
-        /* Mobile Responsive Styles */
+        /* Mobile Responsive */
         @media (max-width: 1024px) {
-            .slide {
-                padding: 40px 40px;
-            }
-
+            .slide { padding: 40px 40px; }
             h1 { font-size: 2.5rem; }
             h2 { font-size: 2rem; margin-bottom: 25px; }
             h3 { font-size: 1.4rem; }
             p, li { font-size: 1.2rem; }
-
             .title-slide h1 { font-size: 3rem; }
             .title-slide .subtitle { font-size: 1.4rem; margin-bottom: 40px; }
-
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 20px;
-            }
-
-            .stat-card {
-                padding: 25px;
-            }
-
-            .stat-card .number {
-                font-size: 3rem;
-            }
-
-            .module-grid {
-                grid-template-columns: repeat(3, 1fr);
-                gap: 15px;
-            }
-
-            .module-card {
-                padding: 15px;
-            }
-
-            .module-card .name {
-                font-size: 1rem;
-            }
-
-            .module-card .count {
-                font-size: 1.5rem;
-            }
-
-            .two-column {
-                grid-template-columns: 1fr;
-                gap: 30px;
-            }
-
-            .comparison {
-                grid-template-columns: 1fr;
-                gap: 20px;
-            }
-
-            .value-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 20px;
-            }
-
-            .code-block {
-                padding: 20px;
-                font-size: 1rem;
-            }
-
-            .architecture {
-                font-size: 0.7rem;
-                padding: 20px;
-            }
-
-            .arch-diagram {
-                padding: 20px;
-                gap: 15px;
-            }
-
-            .arch-layer {
-                padding: 20px;
-            }
-
-            .arch-modules {
-                grid-template-columns: repeat(4, 1fr);
-            }
-
-            .arch-module {
-                font-size: 0.8rem;
-                padding: 10px 6px;
-            }
+            .stats-grid { grid-template-columns: repeat(3, 1fr); gap: 20px; }
+            .stat-card { padding: 25px; }
+            .stat-card .number { font-size: 3rem; }
+            .tool-grid { grid-template-columns: repeat(3, 1fr); gap: 15px; }
+            .tool-card { padding: 15px; }
+            .tool-card .name { font-size: 0.95rem; }
+            .two-column { grid-template-columns: 1fr; gap: 30px; }
+            .comparison { grid-template-columns: 1fr; gap: 20px; }
+            .value-grid { grid-template-columns: repeat(2, 1fr); gap: 20px; }
+            .code-block { padding: 20px; font-size: 1rem; }
         }
 
         @media (max-width: 768px) {
-            body {
-                overflow-y: auto;
-            }
-
-            .slide {
-                padding: 30px 20px 100px 20px;
-                min-height: auto;
-                justify-content: flex-start;
-                padding-top: 40px;
-            }
-
-            .slide.active {
-                display: flex;
-            }
-
+            body { overflow-y: auto; }
+            .slide { padding: 30px 20px 100px 20px; min-height: auto; justify-content: flex-start; padding-top: 40px; }
+            .slide.active { display: flex; }
             h1 { font-size: 2rem; margin-bottom: 20px; }
             h2 { font-size: 1.6rem; margin-bottom: 20px; }
             h3 { font-size: 1.2rem; margin-bottom: 15px; }
             p, li { font-size: 1rem; line-height: 1.6; }
-
-            li {
-                padding-left: 25px;
-                margin-bottom: 12px;
-            }
-
-            .title-slide {
-                padding-top: 60px;
-            }
-
+            li { padding-left: 25px; margin-bottom: 12px; }
+            .title-slide { padding-top: 60px; }
             .title-slide h1 { font-size: 2.2rem; }
             .title-slide .subtitle { font-size: 1.1rem; margin-bottom: 30px; }
             .title-slide .meta { font-size: 0.9rem; }
-
-            .badge {
-                padding: 6px 12px;
-                font-size: 0.85rem;
-                margin: 3px;
-            }
-
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 15px;
-                margin: 25px 0;
-            }
-
-            .stat-card {
-                padding: 20px 15px;
-            }
-
-            .stat-card .number {
-                font-size: 2.5rem;
-            }
-
-            .stat-card .label {
-                font-size: 0.9rem;
-            }
-
-            .module-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 10px;
-            }
-
-            .module-card {
-                padding: 12px;
-            }
-
-            .module-card .name {
-                font-size: 0.85rem;
-            }
-
-            .module-card .count {
-                font-size: 1.3rem;
-            }
-
-            .module-card .label {
-                font-size: 0.75rem;
-            }
-
-            .comparison-card {
-                padding: 25px;
-            }
-
-            .comparison-card h4 {
-                font-size: 1.1rem;
-            }
-
-            .comparison-card li {
-                font-size: 0.95rem;
-                margin-bottom: 10px;
-            }
-
-            .value-grid {
-                grid-template-columns: 1fr;
-                gap: 15px;
-            }
-
-            .value-card {
-                padding: 25px;
-            }
-
-            .value-card .icon {
-                font-size: 2rem;
-                margin-bottom: 15px;
-            }
-
-            .value-card h4 {
-                font-size: 1.2rem;
-            }
-
-            .value-card p {
-                font-size: 1rem;
-            }
-
-            .demo-box {
-                padding: 25px;
-                margin: 20px 0;
-            }
-
-            .demo-box .user {
-                font-size: 1rem;
-            }
-
-            .code-block {
-                padding: 15px;
-                font-size: 0.85rem;
-                margin: 15px 0;
-            }
-
-            .architecture {
-                font-size: 0.5rem;
-                padding: 15px;
-                line-height: 1.3;
-            }
-
-            .arch-diagram {
-                padding: 15px;
-                gap: 12px;
-            }
-
-            .arch-layer {
-                padding: 15px;
-            }
-
-            .arch-layer h4 {
-                font-size: 1.1rem;
-                margin-bottom: 10px;
-            }
-
-            .arch-modules {
-                grid-template-columns: repeat(3, 1fr);
-                gap: 8px;
-            }
-
-            .arch-module {
-                font-size: 0.75rem;
-                padding: 8px 4px;
-            }
-
-            .arch-chip {
-                font-size: 0.8rem;
-                padding: 6px 12px;
-            }
-
-            .arch-workflow {
-                font-size: 0.9rem;
-                padding: 10px 15px;
-            }
-
-            .arch-arrow {
-                font-size: 1.2rem;
-            }
-
-            .cta-slide .github {
-                padding: 15px 35px;
-                font-size: 1.1rem;
-            }
-
-            .nav-hint {
-                display: none;
-            }
-
-            .slide-number {
-                bottom: 80px;
-                right: 20px;
-            }
-
-            .mobile-nav {
-                display: flex;
-            }
-
-            /* Touch-friendly tap zones */
-            .tap-zone {
-                position: fixed;
-                top: 0;
-                bottom: 80px;
-                z-index: 50;
-            }
-
-            .tap-zone.left {
-                left: 0;
-                width: 30%;
-            }
-
-            .tap-zone.right {
-                right: 0;
-                width: 70%;
-            }
+            .badge { padding: 6px 12px; font-size: 0.85rem; margin: 3px; }
+            .stats-grid { grid-template-columns: repeat(3, 1fr); gap: 15px; margin: 25px 0; }
+            .stat-card { padding: 20px 15px; }
+            .stat-card .number { font-size: 2.5rem; }
+            .stat-card .label { font-size: 0.9rem; }
+            .tool-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+            .tool-card { padding: 12px; }
+            .tool-card .name { font-size: 0.85rem; }
+            .tool-card .desc { font-size: 0.85rem; }
+            .comparison-card { padding: 25px; }
+            .comparison-card h4 { font-size: 1.1rem; }
+            .comparison-card li { font-size: 0.95rem; margin-bottom: 10px; }
+            .value-grid { grid-template-columns: 1fr; gap: 15px; }
+            .value-card { padding: 25px; }
+            .value-card h4 { font-size: 1.2rem; }
+            .value-card p { font-size: 1rem; }
+            .demo-box { padding: 25px; margin: 20px 0; }
+            .demo-box .user { font-size: 1rem; }
+            .code-block { padding: 15px; font-size: 0.85rem; margin: 15px 0; }
+            .arch-diagram { padding: 15px; gap: 12px; }
+            .arch-layer { padding: 15px; }
+            .arch-layer h4 { font-size: 1.1rem; margin-bottom: 10px; }
+            .arch-chip { font-size: 0.8rem; padding: 6px 12px; }
+            .arch-arrow { font-size: 1.2rem; }
+            .cta-slide .github { padding: 15px 35px; font-size: 1.1rem; }
+            .nav-hint { display: none; }
+            .slide-number { bottom: 80px; right: 20px; }
+            .mobile-nav { display: flex; }
+            .tap-zone { position: fixed; top: 0; bottom: 80px; z-index: 50; }
+            .tap-zone.left { left: 0; width: 30%; }
+            .tap-zone.right { right: 0; width: 70%; }
         }
 
         @media (max-width: 480px) {
-            .slide {
-                padding: 20px 15px 100px 15px;
-            }
-
+            .slide { padding: 20px 15px 100px 15px; }
             h1 { font-size: 1.7rem; }
             h2 { font-size: 1.4rem; }
             h3 { font-size: 1.1rem; }
-
             .title-slide h1 { font-size: 1.8rem; }
             .title-slide .subtitle { font-size: 1rem; }
-
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-                gap: 10px;
-            }
-
-            .stat-card .number {
-                font-size: 2rem;
-            }
-
-            .module-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .architecture {
-                font-size: 0.4rem;
-            }
-
-            .arch-modules {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .arch-components {
-                gap: 6px;
-            }
-
-            .arch-chip {
-                font-size: 0.75rem;
-                padding: 5px 10px;
-            }
+            .stats-grid { grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+            .stat-card .number { font-size: 2rem; }
+            .tool-grid { grid-template-columns: repeat(2, 1fr); }
+            .arch-components { gap: 6px; }
+            .arch-chip { font-size: 0.75rem; padding: 5px 10px; }
         }
     </style>
 </head>
@@ -848,8 +543,8 @@
         <h1>Conversational SecOps</h1>
         <p class="subtitle">Natural Language Security Operations with Qualys MCP</p>
         <div style="margin: 40px 0;">
-            <span class="badge">70 Tools</span>
-            <span class="badge">13 Modules</span>
+            <span class="badge">12 Tools</span>
+            <span class="badge">Python + FastMCP</span>
             <span class="badge">One Conversation</span>
         </div>
         <p class="meta">Model Context Protocol + Qualys APIs + Claude</p>
@@ -861,27 +556,27 @@
         <p style="margin-bottom: 40px; font-size: 1.8rem;">Answering one question requires navigating multiple dashboards</p>
         <div class="comparison">
             <div class="comparison-card before">
-                <h4>Today's Workflow</h4>
+                <h4>Manual Workflow</h4>
                 <ul>
                     <li>Search KnowledgeBase for CVE</li>
-                    <li>Switch to VMDR for detections</li>
-                    <li>Check asset inventory in GAV</li>
-                    <li>Review cloud posture in TotalCloud</li>
-                    <li>Look for exploitation in EDR</li>
-                    <li>Check patch status in PM</li>
+                    <li>Find QIDs and check severity</li>
+                    <li>Look up threat intelligence tags</li>
+                    <li>Check asset inventory for exposure</li>
+                    <li>Review cloud posture separately</li>
+                    <li>Check container images separately</li>
                 </ul>
-                <p style="margin-top: 20px; color: #ff4444; font-size: 1.4rem;">⏱️ 15-30 minutes per CVE</p>
+                <p style="margin-top: 20px; color: #ff4444; font-size: 1.4rem;">6 context switches per CVE</p>
             </div>
             <div class="comparison-card after">
                 <h4>With qualys-mcp</h4>
                 <div class="code-block" style="margin: 20px 0; font-size: 1.1rem;">
-<span class="prompt">"Am I affected by CVE-2024-3094?"</span>
+<span class="prompt">"Are we affected by CVE-2024-3400?"</span>
 
-<span class="response">3 hosts affected, 1 container image,
-no active exploitation detected.
-Priority: prod-web-01 (internet-facing)</span>
+<span class="response">Severity 5 | Patch available | Ransomware-linked
+14 threat intel tags including Active_Attacks,
+CISA KEV, Exploit_Public, Wormable</span>
                 </div>
-                <p style="margin-top: 20px; color: #00ff88; font-size: 1.4rem;">⚡ 10 seconds</p>
+                <p style="margin-top: 20px; color: #00ff88; font-size: 1.4rem;">One question. Complete context.</p>
             </div>
         </div>
     </div>
@@ -889,172 +584,174 @@ Priority: prod-web-01 (internet-facing)</span>
     <!-- Slide 3: What We Built -->
     <div class="slide">
         <h2>What We Built</h2>
-        <h3>An MCP server exposing 69 Qualys security tools</h3>
+        <h3>12 question-answering tools across Qualys security data</h3>
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="number">70</div>
+                <div class="number">12</div>
                 <div class="label">MCP Tools</div>
             </div>
             <div class="stat-card">
-                <div class="number">13</div>
-                <div class="label">Qualys Modules</div>
+                <div class="number">1</div>
+                <div class="label">Python File</div>
             </div>
             <div class="stat-card">
-                <div class="number">4</div>
-                <div class="label">Cloud Providers</div>
-            </div>
-            <div class="stat-card">
-                <div class="number">12</div>
-                <div class="label">Qualys PODs</div>
+                <div class="number">0</div>
+                <div class="label">Config Required</div>
             </div>
         </div>
-        <div style="text-align: center; margin-top: 20px;">
+        <div style="text-align: center; margin-top: 30px;">
+            <span class="badge">Vulnerability Intelligence</span>
+            <span class="badge">Asset Risk</span>
+            <span class="badge">Threat Intel</span>
             <span class="badge aws">AWS</span>
             <span class="badge azure">Azure</span>
             <span class="badge gcp">GCP</span>
-            <span class="badge oci">OCI</span>
+            <span class="badge">Containers</span>
         </div>
     </div>
 
-    <!-- Slide 4: Module Coverage -->
+    <!-- Slide 4: Tool Coverage -->
     <div class="slide">
-        <h2>Complete Qualys Coverage</h2>
-        <div class="module-grid">
-            <div class="module-card">
-                <div class="name">VMDR</div>
-                <div class="count">8</div>
-                <div class="label">tools</div>
+        <h2>12 Tools</h2>
+        <div class="tool-grid">
+            <div class="tool-card">
+                <div class="name">get_security_posture</div>
+                <div class="desc">Overall health score and risk stats</div>
             </div>
-            <div class="module-card">
-                <div class="name">TotalCloud</div>
-                <div class="count">7</div>
-                <div class="label">tools</div>
+            <div class="tool-card">
+                <div class="name">get_weekly_priorities</div>
+                <div class="desc">Top risk assets and action items</div>
             </div>
-            <div class="module-card">
-                <div class="name">Container</div>
-                <div class="count">6</div>
-                <div class="label">tools</div>
+            <div class="tool-card">
+                <div class="name">get_patch_status</div>
+                <div class="desc">Patching coverage and gaps</div>
             </div>
-            <div class="module-card">
-                <div class="name">GAV</div>
-                <div class="count">6</div>
-                <div class="label">tools</div>
+            <div class="tool-card">
+                <div class="name">investigate_cve</div>
+                <div class="desc">Deep dive on a single CVE</div>
             </div>
-            <div class="module-card">
-                <div class="name">EDR</div>
-                <div class="count">5</div>
-                <div class="label">tools</div>
+            <div class="tool-card new">
+                <div class="name">get_cve_details</div>
+                <div class="desc">Bulk CVE lookup (up to 20)</div>
             </div>
-            <div class="module-card">
-                <div class="name">FIM</div>
-                <div class="count">5</div>
-                <div class="label">tools</div>
+            <div class="tool-card new">
+                <div class="name">get_new_vulns</div>
+                <div class="desc">Newly published vulnerabilities</div>
             </div>
-            <div class="module-card">
-                <div class="name">Patch</div>
-                <div class="count">5</div>
-                <div class="label">tools</div>
+            <div class="tool-card new">
+                <div class="name">get_vulns_by_software</div>
+                <div class="desc">CVEs for Apache, OpenSSL, etc.</div>
             </div>
-            <div class="module-card">
-                <div class="name">WAS</div>
-                <div class="count">5</div>
-                <div class="label">tools</div>
+            <div class="tool-card">
+                <div class="name">get_threat_intel</div>
+                <div class="desc">RTI tags: ransomware, exploits, CISA KEV</div>
             </div>
-            <div class="module-card">
-                <div class="name">CertView</div>
-                <div class="count">5</div>
-                <div class="label">tools</div>
+            <div class="tool-card">
+                <div class="name">get_asset_risk</div>
+                <div class="desc">Per-asset TruRisk and software</div>
             </div>
-            <div class="module-card">
-                <div class="name">Compliance</div>
-                <div class="count">4</div>
-                <div class="label">tools</div>
+            <div class="tool-card">
+                <div class="name">get_tech_debt</div>
+                <div class="desc">EOL/EOS operating systems</div>
             </div>
-            <div class="module-card">
-                <div class="name">KnowledgeBase</div>
-                <div class="count">4</div>
-                <div class="label">tools</div>
+            <div class="tool-card">
+                <div class="name">get_cloud_risk</div>
+                <div class="desc">AWS/Azure/GCP posture</div>
             </div>
-            <div class="module-card">
-                <div class="name">CAR</div>
-                <div class="count">6</div>
-                <div class="label">tools</div>
-            </div>
-            <div class="module-card" style="border-color: #7c3aed;">
-                <div class="name" style="color: #7c3aed;">Workflows</div>
-                <div class="count">4</div>
-                <div class="label">tools</div>
-            </div>
-            <div class="module-card" style="background: linear-gradient(135deg, #00d4ff22, #7c3aed22); border-color: #00d4ff;">
-                <div class="name" style="color: #fff;">Total</div>
-                <div class="count">70</div>
-                <div class="label">tools</div>
+            <div class="tool-card">
+                <div class="name">get_image_vulns</div>
+                <div class="desc">Container image vulnerabilities</div>
             </div>
         </div>
     </div>
 
     <!-- Slide 5: Demo - CVE Triage -->
     <div class="slide">
-        <h2>Demo: CVE Triage</h2>
+        <h2>Demo: CVE Investigation</h2>
         <div class="demo-box">
-            <div class="user">👤 User: "Check if we're affected by the xz backdoor (CVE-2024-3094)"</div>
+            <div class="user" style="font-size: 1.4rem;">User: "Check if we're affected by CVE-2024-3400"</div>
             <div class="claude">
-                <p>🤖 Claude:</p>
                 <div class="code-block" style="margin-top: 15px; font-size: 1.1rem; background: transparent; border: none; padding: 0;">
-[Calling kb_get_cve_mapping → QID 379548]
-[Calling vmdr_search_detections → 3 hosts]
-[Calling cs_search_images → 1 image]
-[Calling tc_list_cdr_findings → no exploitation]
+<span style="color: #888;">[Calling investigate_cve("CVE-2024-3400")]</span>
 
-<span class="response">📍 AFFECTED HOSTS: 3
-   • prod-web-01 (Ubuntu 22.04) - xz 5.6.0
-   • prod-web-02 (Ubuntu 22.04) - xz 5.6.0
-   • staging-api (Debian 12) - xz 5.6.1
+<span class="response">CVE-2024-3400: PAN-OS Command Injection
+Severity: 5 (Critical) | Patch: Available | Ransomware: Yes
 
-📦 CONTAINERS: 1 affected image
-   • myregistry/api-server:latest
+Threat Intelligence:
+  Active_Attacks, Cisa_Known_Exploited_Vulns,
+  Exploit_Public, Ransomware, Remote_Code_Execution,
+  Wormable, Unauthenticated_Exploitation, Easy_Exploit
 
-🔍 CDR: No exploitation attempts detected
-
-⚠️ Priority: prod-web-01 (internet-facing)</span>
+3 related QIDs. Prioritize remediation given active
+exploitation and ransomware linkage.</span>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Slide 6: Demo - Cloud Posture -->
+    <!-- Slide 6: Demo - New Vulns & Software -->
     <div class="slide">
-        <h2>Demo: Multi-Cloud Security Posture</h2>
-        <div class="demo-box">
-            <div class="user">👤 User: "How's our cloud security across all providers?"</div>
-            <div class="claude">
-                <p>🤖 Claude:</p>
-                <div class="code-block" style="margin-top: 15px; font-size: 1.1rem; background: transparent; border: none; padding: 0;">
-[Calling tc_list_controls provider:AWS → 847 controls]
-[Calling tc_list_controls provider:AZURE → 423 controls]
-[Calling tc_list_controls provider:GCP → 156 controls]
-[Calling tc_list_cdr_findings → 5 findings]
+        <h2>Demo: Vulnerability Intelligence</h2>
+        <div class="two-column" style="gap: 40px;">
+            <div class="demo-box" style="margin: 0;">
+                <div class="user">User: "What new vulns this week?"</div>
+                <div class="claude">
+                    <div class="code-block" style="font-size: 1rem; background: transparent; border: none; padding: 0;">
+<span style="color: #888;">[get_new_vulns(days=7)]</span>
 
-<span class="response">CLOUD SECURITY SUMMARY:
+<span class="response">3,432 new vulnerabilities
+  Critical: 251
+  High: 899
+  With patches: 3,387
+  With threat intel: 3,314</span>
+                    </div>
+                </div>
+            </div>
+            <div class="demo-box" style="margin: 0;">
+                <div class="user">User: "Show me Apache vulns"</div>
+                <div class="claude">
+                    <div class="code-block" style="font-size: 1rem; background: transparent; border: none; padding: 0;">
+<span style="color: #888;">[get_vulns_by_software("Apache")]</span>
 
-AWS:  847 controls | 92% passing | 12 HIGH failures
-Azure: 423 controls | 94% passing | 8 HIGH failures
-GCP:  156 controls | 98% passing | 3 HIGH failures
-
-TOP ISSUES:
-• MFA not enabled on root/admin accounts (all providers)
-• Public storage buckets (AWS S3, Azure Blob, GCP GCS)
-• Overly permissive network rules
-
-CDR ALERTS: 5 suspicious activities in last 7 days
-• 2 cryptominer behaviors
-• 3 unusual API access patterns</span>
+<span class="response">294 Apache vulnerabilities
+  Critical: 54
+  High: 129
+  Patchable: 287 (97.6%)
+  HTTP Server, Tomcat, Struts...</span>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Slide 7: Architecture -->
+    <!-- Slide 7: Demo - Bulk CVE -->
+    <div class="slide">
+        <h2>Demo: Bulk CVE Comparison</h2>
+        <div class="demo-box">
+            <div class="user" style="font-size: 1.4rem;">User: "Compare Log4Shell, the PAN-OS bug, and Citrix Bleed"</div>
+            <div class="claude">
+                <div class="code-block" style="margin-top: 15px; font-size: 1.1rem; background: transparent; border: none; padding: 0;">
+<span style="color: #888;">[get_cve_details("CVE-2021-44228,CVE-2024-3400,CVE-2023-4966")]</span>
+
+<span class="response">3 requested, 3 found:
+
+CVE-2021-44228 (Log4Shell)
+  Sev 5 | Patch YES | Ransomware YES
+  Active_Attacks, CISA KEV, Exploit_Public, Wormable, RCE
+
+CVE-2024-3400 (PAN-OS)
+  Sev 5 | Patch YES | Ransomware YES
+  Active_Attacks, CISA KEV, Exploit_Public, Wormable, RCE
+
+CVE-2023-4966 (Citrix Bleed)
+  Sev 5 | Patch YES | Ransomware YES
+  Active_Attacks, CISA KEV, Exploit_Public, Easy_Exploit</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 8: Architecture -->
     <div class="slide">
         <h2>Architecture</h2>
         <div class="arch-diagram">
@@ -1063,168 +760,100 @@ CDR ALERTS: 5 suspicious activities in last 7 days
                 <span class="arch-chip">Natural Language Queries</span>
             </div>
 
-            <div class="arch-arrow">▼</div>
-
-            <div class="arch-layer gateway">
-                <h4>MCP Gateway (Optional)</h4>
-                <div class="arch-components">
-                    <span class="arch-chip">Auth (JWT/OIDC)</span>
-                    <span class="arch-chip">Policy Engine</span>
-                    <span class="arch-chip">Rate Limit</span>
-                    <span class="arch-chip">Audit Logger</span>
-                </div>
-            </div>
-
-            <div class="arch-arrow">▼</div>
+            <div class="arch-arrow">&#9660;</div>
 
             <div class="arch-layer mcp">
-                <h4>qualys-mcp — 70 Tools</h4>
-                <div class="arch-modules">
-                    <span class="arch-module">VMDR</span>
-                    <span class="arch-module">Container</span>
-                    <span class="arch-module">TotalCloud</span>
-                    <span class="arch-module">GAV</span>
-                    <span class="arch-module">KB</span>
-                    <span class="arch-module">Patch</span>
-                    <span class="arch-module">EDR</span>
-                    <span class="arch-module">FIM</span>
-                    <span class="arch-module">WAS</span>
-                    <span class="arch-module">Compliance</span>
-                    <span class="arch-module">CertView</span>
-                    <span class="arch-module">CAR</span>
+                <h4>qualys-mcp &mdash; 12 Tools, Single Python File</h4>
+                <div class="arch-components" style="margin-bottom: 15px;">
+                    <span class="arch-chip">Posture &amp; Priorities</span>
+                    <span class="arch-chip">Vuln Intelligence</span>
+                    <span class="arch-chip">Threat Intel</span>
+                    <span class="arch-chip">Asset Risk</span>
+                    <span class="arch-chip">Cloud &amp; Container</span>
                 </div>
-                <div class="arch-workflow">⚡ Workflows — Cross-Module Orchestration</div>
+                <div class="arch-components">
+                    <span class="arch-chip">JWT + Basic Auth</span>
+                    <span class="arch-chip">KB Cache</span>
+                    <span class="arch-chip">Concurrent API Calls</span>
+                </div>
             </div>
 
-            <div class="arch-arrow">▼</div>
+            <div class="arch-arrow">&#9660;</div>
 
             <div class="arch-layer apis">
                 <h4 style="color: #888;">Qualys APIs</h4>
                 <div class="arch-components">
-                    <span class="arch-chip">Gateway API</span>
-                    <span class="arch-chip">REST API</span>
-                    <span class="arch-chip">XML API</span>
+                    <span class="arch-chip">KB API (XML)</span>
+                    <span class="arch-chip">CSAM v2 (JSON)</span>
+                    <span class="arch-chip">CloudView</span>
+                    <span class="arch-chip">Container Security</span>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Slide 8: Security Features -->
-    <div class="slide">
-        <h2>Production Security</h2>
-        <h3>Enterprise-ready access controls</h3>
-        <div class="two-column">
-            <div>
-                <h4 style="color: #00d4ff; font-size: 1.4rem; margin-bottom: 20px;">Authentication</h4>
-                <ul style="font-size: 1.3rem;">
-                    <li>JWT/OIDC integration</li>
-                    <li>Okta, Azure AD, Auth0</li>
-                    <li>Service account support</li>
-                </ul>
-
-                <h4 style="color: #00d4ff; font-size: 1.4rem; margin: 30px 0 20px;">Authorization</h4>
-                <ul style="font-size: 1.3rem;">
-                    <li>Role-based tool access</li>
-                    <li>Argument filtering</li>
-                    <li>Default deny policies</li>
-                </ul>
-            </div>
-            <div class="code-block" style="font-size: 1rem;">
-{
-  "policies": {
-    "security-analyst": {
-      "allowed_tools": [
-        "vmdr_*",
-        "kb_*",
-        "gav_*"
-      ],
-      "rate_limit_per_min": 100
-    },
-    "developer": {
-      "allowed_tools": [
-        "cs_list_images",
-        "cs_get_image_vulnerabilities"
-      ],
-      "arg_filters": {
-        "filter": {
-          "must_contain": "team:dev"
-        }
-      }
-    }
-  }
-}
-            </div>
-        </div>
-    </div>
-
-    <!-- Slide 9: Value Proposition -->
-    <div class="slide">
-        <h2>Why This Matters</h2>
-        <div class="value-grid">
-            <div class="value-card">
-                <div class="icon">⚡</div>
-                <h4>Faster Triage</h4>
-                <p>CVE impact assessment in seconds instead of minutes. No dashboard hopping.</p>
-            </div>
-            <div class="value-card">
-                <div class="icon">🔗</div>
-                <h4>Better Correlation</h4>
-                <p>AI connects dots across modules that humans miss. Vulnerabilities + assets + threats.</p>
-            </div>
-            <div class="value-card">
-                <div class="icon">👥</div>
-                <h4>Accessibility</h4>
-                <p>Anyone can query security data. No Qualys expertise required.</p>
-            </div>
-            <div class="value-card">
-                <div class="icon">🔒</div>
-                <h4>Controlled Access</h4>
-                <p>Policy engine ensures users only see what they should. Full audit trail.</p>
-            </div>
-            <div class="value-card">
-                <div class="icon">☁️</div>
-                <h4>Multi-Cloud</h4>
-                <p>Unified view across AWS, Azure, GCP, and OCI. One question, all providers.</p>
-            </div>
-            <div class="value-card">
-                <div class="icon">🤖</div>
-                <h4>AI-Ready</h4>
-                <p>Build automated security workflows. Connect to alerting. Daily briefings.</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Slide 10: Use Cases by Role -->
+    <!-- Slide 9: Use Cases by Role -->
     <div class="slide">
         <h2>Use Cases by Role</h2>
         <div class="two-column" style="gap: 40px;">
             <div>
                 <div style="margin-bottom: 35px;">
                     <h4 style="color: #00d4ff; margin-bottom: 10px;">Security Analysts</h4>
-                    <p style="font-size: 1.2rem;">"Show me all critical vulnerabilities in production with public exploits"</p>
+                    <p style="font-size: 1.2rem;">"What vulns have active ransomware exploits?"</p>
                 </div>
                 <div style="margin-bottom: 35px;">
                     <h4 style="color: #00d4ff; margin-bottom: 10px;">Developers</h4>
-                    <p style="font-size: 1.2rem;">"Are there any vulnerabilities in the containers I pushed this week?"</p>
+                    <p style="font-size: 1.2rem;">"What vulns are in this container image?"</p>
                 </div>
                 <div style="margin-bottom: 35px;">
                     <h4 style="color: #00d4ff; margin-bottom: 10px;">Compliance</h4>
-                    <p style="font-size: 1.2rem;">"What's our CIS benchmark score for AWS? What's failing?"</p>
+                    <p style="font-size: 1.2rem;">"How many EOL systems do we have?"</p>
                 </div>
             </div>
             <div>
                 <div style="margin-bottom: 35px;">
                     <h4 style="color: #7c3aed; margin-bottom: 10px;">Incident Response</h4>
-                    <p style="font-size: 1.2rem;">"Show me all activity from IP 185.220.101.x across all systems"</p>
+                    <p style="font-size: 1.2rem;">"Is CVE-2024-3400 being actively exploited?"</p>
                 </div>
                 <div style="margin-bottom: 35px;">
-                    <h4 style="color: #7c3aed; margin-bottom: 10px;">DevSecOps</h4>
-                    <p style="font-size: 1.2rem;">"What patches are missing on hosts in the kubernetes-nodes group?"</p>
+                    <h4 style="color: #7c3aed; margin-bottom: 10px;">Cloud Security</h4>
+                    <p style="font-size: 1.2rem;">"What's our posture across AWS, Azure, and GCP?"</p>
                 </div>
                 <div style="margin-bottom: 35px;">
                     <h4 style="color: #7c3aed; margin-bottom: 10px;">Executives</h4>
-                    <p style="font-size: 1.2rem;">"Give me a one-paragraph security summary for the board meeting"</p>
+                    <p style="font-size: 1.2rem;">"How secure are we overall?"</p>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 10: Why This Matters -->
+    <div class="slide">
+        <h2>Why This Matters</h2>
+        <div class="value-grid">
+            <div class="value-card">
+                <h4>Fewer Tools, Better Answers</h4>
+                <p>12 tools beat 60 API wrappers. The AI picks the right tool almost every time.</p>
+            </div>
+            <div class="value-card">
+                <h4>Answers, Not Data</h4>
+                <p>Tools return severity breakdowns, risk rankings, and actionable summaries &mdash; not raw API responses.</p>
+            </div>
+            <div class="value-card">
+                <h4>Anyone Can Query</h4>
+                <p>No Qualys expertise required. Ask in plain English, get security answers.</p>
+            </div>
+            <div class="value-card">
+                <h4>Zero Config</h4>
+                <p>Single Python file. Install with uvx. Four env vars. No Docker, no database.</p>
+            </div>
+            <div class="value-card">
+                <h4>Multi-Cloud</h4>
+                <p>Unified view across AWS, Azure, and GCP. One question, all providers.</p>
+            </div>
+            <div class="value-card">
+                <h4>Threat Intelligence</h4>
+                <p>12+ RTI categories: ransomware, active attacks, CISA KEV, weaponized exploits, and more.</p>
             </div>
         </div>
     </div>
@@ -1233,44 +862,45 @@ CDR ALERTS: 5 suspicious activities in last 7 days
     <div class="slide">
         <h2>Getting Started</h2>
         <div class="code-block" style="font-size: 1.3rem;">
-<span class="comment"># Clone and build</span>
-git clone https://github.com/nelssec/qualys-mcp
-cd qualys-mcp
-go build -o qualys-mcp ./cmd/qualys-mcp
+<span class="comment"># Add to Claude Desktop config</span>
+<span class="comment"># ~/Library/Application Support/Claude/claude_desktop_config.json</span>
 
-<span class="comment"># Configure credentials</span>
-export QUALYS_USERNAME=<span class="string">"your-username"</span>
-export QUALYS_PASSWORD=<span class="string">"your-password"</span>
-export QUALYS_POD=<span class="string">"US1"</span>  <span class="comment"># or EU1, CA1, etc.</span>
-
-<span class="comment"># Add to Claude Code (claude_desktop_config.json)</span>
 {
   <span class="string">"mcpServers"</span>: {
     <span class="string">"qualys"</span>: {
-      <span class="string">"command"</span>: <span class="string">"/path/to/qualys-mcp"</span>
+      <span class="string">"command"</span>: <span class="string">"uvx"</span>,
+      <span class="string">"args"</span>: [<span class="string">"qualys-mcp"</span>],
+      <span class="string">"env"</span>: {
+        <span class="string">"QUALYS_USERNAME"</span>: <span class="string">"your-username"</span>,
+        <span class="string">"QUALYS_PASSWORD"</span>: <span class="string">"your-password"</span>,
+        <span class="string">"QUALYS_BASE_URL"</span>: <span class="string">"qualysapi.qualys.com"</span>,
+        <span class="string">"QUALYS_GATEWAY_URL"</span>: <span class="string">"gateway.qg1.apps.qualys.com"</span>
+      }
     }
   }
 }
+
+<span class="comment"># That's it. No build step. No Docker.</span>
         </div>
     </div>
 
     <!-- Slide 12: CTA -->
     <div class="slide title-slide cta-slide">
         <h1>The Future of SecOps<br>is Conversational</h1>
-        <p class="subtitle" style="margin-top: 30px;">70 tools. 13 modules. One conversation.</p>
-        <a href="https://github.com/nelssec/qualys-mcp" class="github">View on GitHub →</a>
+        <p class="subtitle" style="margin-top: 30px;">12 tools. One Python file. One conversation.</p>
+        <a href="https://github.com/nelssec/qualys-mcp" class="github">View on GitHub &rarr;</a>
         <p style="margin-top: 60px; color: #666; font-size: 1rem;">
-            Open source • MIT License • Not affiliated with Qualys, Inc.
+            Open source &bull; MIT License &bull; Not affiliated with Qualys, Inc.
         </p>
     </div>
 
     <div class="slide-number" id="slideNumber">1 / 12</div>
-    <div class="nav-hint">← → or click to navigate</div>
+    <div class="nav-hint">&larr; &rarr; or click to navigate</div>
 
     <!-- Mobile Navigation -->
     <div class="mobile-nav">
-        <button onclick="prevSlide()" aria-label="Previous slide">←</button>
-        <button onclick="nextSlide()" aria-label="Next slide">→</button>
+        <button onclick="prevSlide()" aria-label="Previous slide">&larr;</button>
+        <button onclick="nextSlide()" aria-label="Next slide">&rarr;</button>
     </div>
 
     <!-- Touch zones for tap navigation -->

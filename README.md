@@ -1,8 +1,8 @@
 # Qualys MCP Server
 
-A lightweight MCP server for Qualys security data - **12 tools** that answer your security questions.
+A lightweight MCP server that connects AI assistants to Qualys security data. **12 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
 
-## Claude Desktop Config
+## Setup
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -15,8 +15,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "env": {
         "QUALYS_USERNAME": "your-username",
         "QUALYS_PASSWORD": "your-password",
-        "QUALYS_BASE_URL": "https://qualysapi.qualys.com",
-        "QUALYS_GATEWAY_URL": "https://gateway.qg1.apps.qualys.com"
+        "QUALYS_BASE_URL": "qualysapi.qualys.com",
+        "QUALYS_GATEWAY_URL": "gateway.qg1.apps.qualys.com"
       }
     }
   }
@@ -25,36 +25,68 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 Requires [uv](https://docs.astral.sh/uv/): `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-## Alternative Installation
+### Alternative
 
 ```bash
-# Install globally
 pip install qualys-mcp
-
-# Run directly
-export QUALYS_USERNAME="your-username"
-export QUALYS_PASSWORD="your-password"
-export QUALYS_BASE_URL="https://qualysapi.qualys.com"
-export QUALYS_GATEWAY_URL="https://gateway.qg1.apps.qualys.com"
 qualys-mcp
 ```
 
+### Self-Signed Certificates
+
+For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to the env block.
+
 ## Tools
 
-| Tool | Question it answers |
-|------|---------------------|
-| `get_weekly_priorities` | What should my team fix this week? |
-| `investigate_cve` | Are we affected by CVE-XXXX? |
-| `get_security_posture` | How secure are we overall? |
-| `get_patch_status` | What's our patching coverage? |
-| `get_compliance_gaps` | What will fail our audit? |
-| `get_cloud_risk` | What's our cloud security posture? |
-| `get_asset_risk` | Why is this asset risky? |
-| `get_tech_debt` | How do we reduce EOL software? |
-| `get_image_vulns` | What vulns are in this container image? |
-| `get_expiring_certs` | What certificates expire soon? |
-| `get_threats` | What threats have we detected? |
-| `get_webapp_vulns` | What web app vulns exist? |
+12 tools covering vulnerability management, threat intelligence, asset risk, cloud security, and containers.
+
+### Security Posture & Priorities
+
+| Tool | What it answers |
+|------|----------------|
+| `get_security_posture` | How secure are we overall? Health score, risk distribution, container and cloud stats |
+| `get_weekly_priorities` | What should my team fix this week? Top risk assets ranked by TruRisk |
+| `get_patch_status` | What's our patching coverage? Risk distribution and assets needing remediation |
+
+### Vulnerability Intelligence
+
+| Tool | What it answers |
+|------|----------------|
+| `investigate_cve` | Are we affected by CVE-XXXX? QIDs, severity, patches, threat intel |
+| `get_cve_details` | Tell me about these 5 CVEs. Bulk lookup with concurrent fetching |
+| `get_new_vulns` | What new vulns dropped this week? Severity breakdown, RTI tags, patch status |
+| `get_vulns_by_software` | What vulns affect Apache? Search by software, vendor, or product name |
+| `get_threat_intel` | What vulns have ransomware/active exploits? RTI breakdown across 12+ threat categories |
+
+### Asset & Infrastructure Risk
+
+| Tool | What it answers |
+|------|----------------|
+| `get_asset_risk` | Why is this asset risky? TruRisk score, software inventory, EOL status |
+| `get_tech_debt` | How many EOL/EOS systems do we have? OS and hardware lifecycle status |
+| `get_cloud_risk` | What's our cloud security posture? AWS/Azure/GCP accounts and failed controls |
+| `get_image_vulns` | What vulns are in this container image? Severity breakdown and fixes |
+
+### Threat Intel Categories
+
+`get_threat_intel` supports filtering by any RTI (Real-Time Threat Indicator) tag:
+
+`Ransomware` `Malware` `Active_Attacks` `Exploit_Public` `Easy_Exploit` `Wormable` `Cisa_Known_Exploited_Vulns` `Denial_of_Service` `Privilege_Escalation` `Remote_Code_Execution` `Predicted_High_Risk` `Unauthenticated_Exploitation`
+
+## Example Conversations
+
+```
+"What new vulns came out this week?"           → get_new_vulns(days=7)
+"Show me Apache vulnerabilities"               → get_vulns_by_software("Apache")
+"Are we affected by Log4Shell?"                → investigate_cve("CVE-2021-44228")
+"Compare CVE-2024-3400 and CVE-2023-4966"      → get_cve_details("CVE-2024-3400,CVE-2023-4966")
+"What vulns have active ransomware?"           → get_threat_intel(threat_type="Ransomware")
+"What should we patch first?"                  → get_weekly_priorities()
+"How secure are we?"                           → get_security_posture()
+"What's wrong with asset 233946644?"           → get_asset_risk("233946644")
+"How many EOL systems do we have?"             → get_tech_debt()
+"What's our cloud posture?"                    → get_cloud_risk()
+```
 
 ## Qualys PODs
 
@@ -68,4 +100,4 @@ qualys-mcp
 
 ## License
 
-MIT - Copyright (c) 2025 Andrew Nelson
+MIT - Copyright (c) 2026 Andrew Nelson
