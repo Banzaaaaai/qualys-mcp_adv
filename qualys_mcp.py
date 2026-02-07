@@ -2,12 +2,15 @@
 """Qualys MCP Server - Pure Python implementation using FastMCP"""
 
 import os
+import sys
 import json
 import base64
 from urllib.request import Request, urlopen
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
+from urllib.error import HTTPError, URLError
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastmcp import FastMCP
 
 mcp = FastMCP("qualys-mcp")
@@ -25,26 +28,39 @@ BASE_URL = normalize_url(os.environ.get('QUALYS_BASE_URL', ''))
 GATEWAY_URL = normalize_url(os.environ.get('QUALYS_GATEWAY_URL', ''))
 BASIC_AUTH = base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
 BEARER_TOKEN = None
+BEARER_TOKEN_TIME = None
 KB_CACHE = {}
 DETECTION_CACHE = {}
 DETECTION_CACHE_TIME = None
 
 AUTH_ERROR = None
 
+def _log(msg):
+    """Log to stderr (visible in MCP server logs, not in protocol output)."""
+    print(f"[qualys-mcp] {msg}", file=sys.stderr)
+
+
 def get_bearer_token():
-    global BEARER_TOKEN, AUTH_ERROR
-    if BEARER_TOKEN:
-        return BEARER_TOKEN
+    """Get bearer token, refreshing if expired (tokens last ~4 hours)."""
+    global BEARER_TOKEN, BEARER_TOKEN_TIME, AUTH_ERROR
+    # Refresh if older than 3.5 hours
+    if BEARER_TOKEN and BEARER_TOKEN_TIME:
+        age = (datetime.now(timezone.utc) - BEARER_TOKEN_TIME).total_seconds()
+        if age < 12600:  # 3.5 hours
+            return BEARER_TOKEN
+        _log("Bearer token expired, refreshing...")
     try:
         auth_data = urlencode({'username': USERNAME, 'password': PASSWORD, 'token': 'true'}).encode()
         req = Request(f"{GATEWAY_URL}/auth", data=auth_data, method='POST')
         req.add_header('Content-Type', 'application/x-www-form-urlencoded')
         with urlopen(req, timeout=30) as resp:
             BEARER_TOKEN = resp.read().decode().strip()
+            BEARER_TOKEN_TIME = datetime.now(timezone.utc)
             AUTH_ERROR = None
             return BEARER_TOKEN
     except Exception as e:
         AUTH_ERROR = str(e)
+        _log(f"Auth error: {e}")
         return None
 
 
@@ -59,38 +75,105 @@ def api_get(url, gateway=False, timeout=30):
     try:
         with urlopen(req, timeout=timeout) as resp:
             return resp.read()
-    except:
+    except HTTPError as e:
+        _log(f"API error {e.code}: {url.split('?')[0]}")
+        return None
+    except URLError as e:
+        _log(f"Connection error: {e.reason}")
+        return None
+    except Exception as e:
+        _log(f"Request failed: {e}")
         return None
 
 
-def get_detections(severity=5, limit=200, use_cache=True):
-    """Get VMDR detections. Uses 60-second cache by default."""
+def get_detections(severity=5, limit=200, use_cache=True, days=30, qds_min=0):
+    """Get VMDR detections with hostname and QDS. Uses 5-minute cache.
+    Best practices: filter_superseded_qids, vm_processed_after, qds_min.
+    Note: VMDR classic API is slow (~2min) for large environments."""
     global DETECTION_CACHE, DETECTION_CACHE_TIME
 
-    cache_key = f"{severity}_{limit}"
-    now = datetime.utcnow()
+    cache_key = f"{severity}_{limit}_{qds_min}"
+    now = datetime.now(timezone.utc)
 
     if use_cache and cache_key in DETECTION_CACHE and DETECTION_CACHE_TIME:
         age = (now - DETECTION_CACHE_TIME).total_seconds()
-        if age < 60:
+        if age < 300:  # 5-minute cache
             return DETECTION_CACHE[cache_key]
 
-    data = api_get(f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list&severities={severity}&truncation_limit={limit}&status=Active", timeout=90)
+    after_date = (now - timedelta(days=days)).strftime('%Y-%m-%d')
+    url = (
+        f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list"
+        f"&severities={severity}&truncation_limit={limit}&status=Active"
+        f"&show_qds=1&filter_superseded_qids=1"
+        f"&vm_processed_after={after_date}"
+    )
+    if qds_min > 0:
+        url += f"&qds_min={qds_min}"
+
+    data = api_get(url, timeout=180)
     if not data:
         return []
     dets = []
     try:
         root = ET.fromstring(data)
         for host in root.findall('.//HOST'):
-            hid, ip = host.findtext('ID', ''), host.findtext('IP', '')
+            hid = host.findtext('ID', '')
+            ip = host.findtext('IP', '')
+            hostname = host.findtext('DNS', '')
             for d in host.findall('.//DETECTION'):
-                dets.append({'host_id': hid, 'ip': ip, 'qid': int(d.findtext('QID', '0')),
-                            'severity': int(d.findtext('SEVERITY', '0')), 'status': d.findtext('STATUS', '')})
-    except:
-        pass
+                qds_el = d.find('QDS')
+                qds = 0
+                if qds_el is not None and qds_el.text:
+                    try:
+                        qds = int(qds_el.text)
+                    except ValueError:
+                        pass
+                dets.append({
+                    'host_id': hid, 'ip': ip, 'hostname': hostname,
+                    'qid': int(d.findtext('QID', '0')),
+                    'severity': int(d.findtext('SEVERITY', '0')),
+                    'status': d.findtext('STATUS', ''),
+                    'qds': qds,
+                    'first_found': d.findtext('FIRST_FOUND_DATETIME', ''),
+                })
+    except ET.ParseError as e:
+        _log(f"XML parse error in detections: {e}")
 
     DETECTION_CACHE[cache_key] = dets
     DETECTION_CACHE_TIME = now
+    return dets
+
+
+def get_host_detections(host_id, severity=4):
+    """Get detections for a specific host by ID (targeted, fast)."""
+    data = api_get(
+        f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list"
+        f"&ids={host_id}&severities={severity}&show_qds=1&filter_superseded_qids=1",
+        timeout=60
+    )
+    if not data:
+        return []
+    dets = []
+    try:
+        root = ET.fromstring(data)
+        for host in root.findall('.//HOST'):
+            for d in host.findall('.//DETECTION'):
+                qds_el = d.find('QDS')
+                qds = 0
+                if qds_el is not None and qds_el.text:
+                    try:
+                        qds = int(qds_el.text)
+                    except ValueError:
+                        pass
+                dets.append({
+                    'qid': int(d.findtext('QID', '0')),
+                    'severity': int(d.findtext('SEVERITY', '0')),
+                    'status': d.findtext('STATUS', ''),
+                    'qds': qds,
+                    'first_found': d.findtext('FIRST_FOUND_DATETIME', ''),
+                })
+    except ET.ParseError:
+        pass
     return dets
 
 
@@ -103,6 +186,7 @@ def parse_vuln_xml(v):
         'severity': int(v.findtext('SEVERITY_LEVEL', '0')),
         'cves': [c.findtext('ID', '') for c in v.findall('.//CVE_LIST/CVE')],
         'solution': v.findtext('SOLUTION', ''),
+        'diagnosis': v.findtext('DIAGNOSIS', ''),
         'patch_available': v.findtext('PATCHABLE', '0') == '1'
     }
 
@@ -111,7 +195,7 @@ def get_kb(qid):
     """Get KB entry for a single QID (uses cache)"""
     if qid in KB_CACHE:
         return KB_CACHE[qid]
-    data = api_get(f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&ids={qid}")
+    data = api_get(f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&ids={qid}&details=All")
     if not data:
         return None
     try:
@@ -122,7 +206,7 @@ def get_kb(qid):
         result = parse_vuln_xml(v)
         KB_CACHE[qid] = result
         return result
-    except:
+    except ET.ParseError:
         return None
 
 
@@ -134,40 +218,88 @@ def get_kb_batch(qids):
     uncached = [q for q in qids if q not in KB_CACHE]
 
     if uncached:
-        ids_str = ','.join(map(str, uncached[:50]))
-        data = api_get(f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&ids={ids_str}", timeout=60)
-        if data:
-            try:
-                root = ET.fromstring(data)
-                for v in root.findall('.//VULN'):
-                    parsed = parse_vuln_xml(v)
-                    KB_CACHE[parsed['qid']] = parsed
-            except:
-                pass
+        # Fetch in batches of 50
+        for i in range(0, len(uncached), 50):
+            batch = uncached[i:i+50]
+            ids_str = ','.join(map(str, batch))
+            data = api_get(f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&ids={ids_str}&details=All", timeout=60)
+            if data:
+                try:
+                    root = ET.fromstring(data)
+                    for v in root.findall('.//VULN'):
+                        parsed = parse_vuln_xml(v)
+                        KB_CACHE[parsed['qid']] = parsed
+                except ET.ParseError:
+                    pass
 
     return {q: KB_CACHE.get(q) for q in qids}
 
 
 def get_cve_qids(cve):
-    data = api_get(f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&details=Basic&cve={cve}", timeout=60)
+    data = api_get(f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&details=All&cve={cve}", timeout=60)
     if not data:
         return []
     try:
-        return [int(v.findtext('QID')) for v in ET.fromstring(data).findall('.//VULN') if v.findtext('QID')]
-    except:
+        result = []
+        for v in ET.fromstring(data).findall('.//VULN'):
+            qid = v.findtext('QID')
+            if qid:
+                parsed = parse_vuln_xml(v)
+                KB_CACHE[parsed['qid']] = parsed  # Cache while we have it
+                result.append(int(qid))
+        return result
+    except ET.ParseError:
         return []
+
+
+def get_asset_by_id(asset_id):
+    """Get a single asset by ID using CSAM v2 POST endpoint (fast, targeted)."""
+    token = get_bearer_token()
+    url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize=1"
+    body = json.dumps({"filter": f"assetId:{asset_id}"})
+    req = Request(url, data=body.encode(), method='POST')
+    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('X-Requested-With', 'qualys-mcp')
+    try:
+        with urlopen(req, timeout=30) as resp:
+            assets = json.loads(resp.read()).get('assetListData', {}).get('asset', [])
+            return assets[0] if assets else None
+    except Exception as e:
+        _log(f"get_asset_by_id error: {e}")
+        return None
 
 
 def get_assets(limit=100, qql=None):
-    url = f"{GATEWAY_URL}/am/v1/assets?pageSize={limit}"
-    if qql:
-        from urllib.parse import quote
-        url += f"&filter={quote(qql)}"
-    data = api_get(url, gateway=True)
+    """Search assets using CSAM v2 POST endpoint."""
+    token = get_bearer_token()
+    url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize={limit}"
+    body = json.dumps({"filter": qql}) if qql else "{}"
+    req = Request(url, data=body.encode(), method='POST')
+    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('X-Requested-With', 'qualys-mcp')
     try:
-        return json.loads(data).get('assetListData', {}).get('asset', []) if data else []
-    except:
+        with urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read()).get('assetListData', {}).get('asset', [])
+    except Exception as e:
+        _log(f"get_assets error: {e}")
         return []
+
+
+def get_asset_count():
+    """Fast asset count using dedicated count endpoint."""
+    token = get_bearer_token()
+    url = f"{GATEWAY_URL}/rest/2.0/count/am/asset"
+    req = Request(url, data=b'{}', method='POST')
+    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('X-Requested-With', 'qualys-mcp')
+    try:
+        with urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read()).get('count', 0)
+    except Exception:
+        return 0
 
 
 def get_eol_count(qql_filter):
@@ -182,42 +314,8 @@ def get_eol_count(qql_filter):
     try:
         with urlopen(req, timeout=30) as resp:
             return json.loads(resp.read()).get('count', 0)
-    except:
+    except Exception:
         return 0
-
-
-def get_eol_assets_by_qql(qql_filter, limit=500):
-    """Query assets using QQL filter syntax with pagination"""
-    token = get_bearer_token()
-    all_assets = []
-    last_seen_id = None
-    page_size = min(100, limit)
-
-    while len(all_assets) < limit:
-        url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize={page_size}"
-        if last_seen_id:
-            url += f"&lastSeenAssetId={last_seen_id}"
-
-        filter_body = json.dumps({"filter": qql_filter})
-        req = Request(url, data=filter_body.encode(), method='POST')
-        req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
-        req.add_header('Content-Type', 'application/json')
-        req.add_header('X-Requested-With', 'qualys-mcp')
-
-        try:
-            with urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read())
-                assets = data.get('assetListData', {}).get('asset', [])
-                if not assets:
-                    break
-                all_assets.extend(assets)
-                if not data.get('hasMore'):
-                    break
-                last_seen_id = assets[-1].get('assetId')
-        except:
-            break
-
-    return all_assets[:limit]
 
 
 def is_eol_stage(stage):
@@ -240,39 +338,8 @@ def get_eol_sample(qql_filter, limit=100):
     try:
         with urlopen(req, timeout=30) as resp:
             return json.loads(resp.read()).get('assetListData', {}).get('asset', [])
-    except:
+    except Exception:
         return []
-
-
-def get_all_eol_assets(limit=15):
-    """Get EOL/EOS asset samples (fast, single page per query)"""
-    results = {'os': [], 'hardware': []}
-
-    for a in get_eol_sample("operatingSystem.lifecycle.stage:`EOL/EOS`", 100):
-        os_info = a.get('operatingSystem', {}) or {}
-        lifecycle = os_info.get('lifecycle', {}) or {}
-        stage = lifecycle.get('stage', '')
-        if is_eol_stage(stage) and len(results['os']) < limit:
-            results['os'].append({
-                'assetId': a.get('assetId'),
-                'address': a.get('address', ''),
-                'name': os_info.get('osName', '') or 'Unknown',
-                'stage': stage
-            })
-
-    for a in get_eol_sample("hardware.lifecycle.stage:`EOL/EOS`", 100):
-        hw_info = a.get('hardware', {}) or {}
-        lifecycle = hw_info.get('lifecycle', {}) or {}
-        stage = lifecycle.get('stage', '')
-        if is_eol_stage(stage) and len(results['hardware']) < limit:
-            results['hardware'].append({
-                'assetId': a.get('assetId'),
-                'address': a.get('address', ''),
-                'name': hw_info.get('model', '') or 'Unknown',
-                'stage': stage
-            })
-
-    return results
 
 
 def get_images(limit=100, severity=None):
@@ -282,7 +349,7 @@ def get_images(limit=100, severity=None):
     data = api_get(url, gateway=True)
     try:
         return json.loads(data).get('data', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
@@ -290,7 +357,7 @@ def get_containers(limit=100):
     data = api_get(f"{GATEWAY_URL}/csapi/v1.3/containers?pageSize={limit}&filter=state:RUNNING", gateway=True)
     try:
         return json.loads(data).get('data', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
@@ -298,7 +365,7 @@ def get_connectors(provider='aws', limit=50):
     data = api_get(f"{GATEWAY_URL}/cloudview-api/rest/v1/{provider}/connectors?pageSize={limit}", gateway=True)
     try:
         return json.loads(data).get('content', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
@@ -306,17 +373,17 @@ def get_evaluations(account_id, provider='aws', limit=500):
     data = api_get(f"{GATEWAY_URL}/cloudview-api/rest/v1/{provider}/evaluations/{account_id}?pageSize={limit}", gateway=True)
     try:
         return json.loads(data).get('content', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
 def get_cdr(days=7, limit=100):
-    end = datetime.utcnow()
+    end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
     data = api_get(f"{GATEWAY_URL}/cdr-api/rest/v1/findings/?startAt={start.isoformat()}Z&endAt={end.isoformat()}Z&limit={limit}", gateway=True)
     try:
         return json.loads(data).get('content', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
@@ -324,7 +391,7 @@ def get_image_details(image_id):
     data = api_get(f"{GATEWAY_URL}/csapi/v1.3/images/{image_id}", gateway=True)
     try:
         return json.loads(data) if data else None
-    except:
+    except json.JSONDecodeError:
         return None
 
 
@@ -332,29 +399,29 @@ def get_image_vulns_api(image_id):
     data = api_get(f"{GATEWAY_URL}/csapi/v1.3/images/{image_id}/vuln", gateway=True)
     try:
         return json.loads(data).get('data', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
 def get_certificates(limit=100, days_expiring=None):
     url = f"{GATEWAY_URL}/certview/v1/certificates?pageSize={limit}"
     if days_expiring:
-        future = (datetime.utcnow() + timedelta(days=days_expiring)).strftime('%Y-%m-%d')
+        future = (datetime.now(timezone.utc) + timedelta(days=days_expiring)).strftime('%Y-%m-%d')
         url += f"&filter=validTo:<{future}"
     data = api_get(url, gateway=True)
     try:
         return json.loads(data).get('data', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
 def get_fim_events(limit=100, days=7):
-    end = datetime.utcnow()
+    end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
     data = api_get(f"{BASE_URL}/fim/v2/events?filter=dateTime:[{start.strftime('%Y-%m-%dT%H:%M:%SZ')}...{end.strftime('%Y-%m-%dT%H:%M:%SZ')}]&pageSize={limit}")
     try:
         return json.loads(data).get('data', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
@@ -365,7 +432,7 @@ def get_edr_events(limit=100, severity=None):
     data = api_get(url, gateway=True)
     try:
         return json.loads(data).get('data', []) if data else []
-    except:
+    except json.JSONDecodeError:
         return []
 
 
@@ -376,7 +443,6 @@ def get_was_findings(limit=100, severity=None):
         criteria += f"<Criteria field=\"severity\" operator=\"EQUALS\">{severity}</Criteria>"
     criteria += f"</filters><preferences><limitResults>{limit}</limitResults></preferences></ServiceRequest>"
 
-    from urllib.request import Request
     req = Request(url, data=criteria.encode(), method='POST')
     req.add_header('Authorization', f'Basic {BASIC_AUTH}')
     req.add_header('Content-Type', 'text/xml')
@@ -388,7 +454,7 @@ def get_was_findings(limit=100, severity=None):
             for f in root.findall('.//Finding'):
                 findings.append({
                     'id': f.findtext('id', ''),
-                    'qid': f.findtext('qid', ''),
+                    'qid': int(f.findtext('qid', '0')),
                     'name': f.findtext('name', ''),
                     'severity': int(f.findtext('severity', '0')),
                     'url': f.findtext('url', ''),
@@ -396,33 +462,101 @@ def get_was_findings(limit=100, severity=None):
                     'webAppName': f.findtext('webApp/name', '')
                 })
             return findings
-    except:
+    except Exception as e:
+        _log(f"WAS findings error: {e}")
         return []
 
 
-def get_was_webapps(limit=100):
-    data = api_get(f"{BASE_URL}/qps/rest/3.0/count/was/webapp")
-    webapps = []
-    url = f"{BASE_URL}/qps/rest/3.0/search/was/webapp"
-    criteria = f"<ServiceRequest><preferences><limitResults>{limit}</limitResults></preferences></ServiceRequest>"
+def get_criticality(asset):
+    """Extract criticality score from asset"""
+    crit = asset.get('criticality')
+    if isinstance(crit, dict):
+        return crit.get('score', 0) or 0
+    return crit or 0
 
-    from urllib.request import Request
-    req = Request(url, data=criteria.encode(), method='POST')
-    req.add_header('Authorization', f'Basic {BASIC_AUTH}')
-    req.add_header('Content-Type', 'text/xml')
-    req.add_header('X-Requested-With', 'qualys-mcp')
-    try:
-        with urlopen(req, timeout=60) as resp:
-            root = ET.fromstring(resp.read())
-            for wa in root.findall('.//WebApp'):
-                webapps.append({
-                    'id': wa.findtext('id', ''),
-                    'name': wa.findtext('name', ''),
-                    'url': wa.findtext('url', '')
-                })
-    except:
-        pass
-    return webapps
+
+def fetch_all_eol(qql_filter, limit=1000, max_pages=50):
+    """Fetch EOL assets with pagination until limit or max_pages reached"""
+    token = get_bearer_token()
+    results = []
+    seen = set()
+    last_id = None
+
+    for _ in range(max_pages):
+        if len(results) >= limit:
+            break
+
+        url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize=100"
+        if last_id:
+            url += f"&lastSeenAssetId={last_id}"
+
+        filter_body = json.dumps({"filter": qql_filter})
+        req = Request(url, data=filter_body.encode(), method='POST')
+        req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('X-Requested-With', 'qualys-mcp')
+
+        try:
+            with urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+                assets = data.get('assetListData', {}).get('asset', [])
+                if not assets:
+                    break
+
+                for a in assets:
+                    aid = a.get('assetId')
+                    if aid in seen:
+                        continue
+                    seen.add(aid)
+
+                    if 'operatingSystem' in qql_filter:
+                        info = a.get('operatingSystem', {}) or {}
+                        name_field = 'os'
+                        name_val = info.get('osName', '') or 'Unknown'
+                    else:
+                        info = a.get('hardware', {}) or {}
+                        name_field = 'hardware'
+                        name_val = info.get('model', '') or 'Unknown'
+
+                    lifecycle = info.get('lifecycle', {}) or {}
+                    stage = lifecycle.get('stage', '')
+
+                    if is_eol_stage(stage):
+                        results.append({
+                            'assetId': aid,
+                            'address': a.get('address', ''),
+                            'hostname': a.get('dnsHostName', '') or a.get('dnsName', ''),
+                            name_field: name_val,
+                            'stage': stage,
+                            'criticality': get_criticality(a),
+                            'riskScore': a.get('assetRiskScore') or 0
+                        })
+
+                if not data.get('hasMore'):
+                    break
+                last_id = assets[-1].get('assetId')
+        except Exception:
+            break
+
+    return results[:limit]
+
+
+# --- Concurrent helper ---
+def _run_concurrent(**tasks):
+    """Run named tasks concurrently. Returns dict of {name: result}.
+    Each task value is a callable (lambda or function).
+    """
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(len(tasks), 8)) as executor:
+        futures = {executor.submit(fn): name for name, fn in tasks.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                results[name] = future.result()
+            except Exception as e:
+                _log(f"Concurrent task '{name}' failed: {e}")
+                results[name] = None
+    return results
 
 
 @mcp.tool()
@@ -431,7 +565,14 @@ def get_weekly_priorities(limit: int = 10) -> dict:
     result = {'summary': {'totalCritical': 0, 'assetsAffected': 0, 'containersAtRisk': 0, 'patchable': 0},
               'priorities': [], 'byEffort': {'patch': 0, 'config': 0, 'upgrade': 0}}
 
-    dets = get_detections(5, 200)
+    # Run detections (QDS 70+ = high/critical risk) and container checks concurrently
+    concurrent = _run_concurrent(
+        dets=lambda: get_detections(5, 200, qds_min=70),
+        vuln_imgs=lambda: get_images(50, 5),
+        containers=lambda: get_containers(100),
+    )
+
+    dets = concurrent.get('dets') or []
     qids = {}
     hosts = set()
     for d in dets:
@@ -452,16 +593,22 @@ def get_weekly_priorities(limit: int = 10) -> dict:
         if patch:
             result['summary']['patchable'] += 1
         result['priorities'].append({
-            'rank': i + 1, 'qid': qid, 'title': kb['title'] if kb else f"QID {qid}",
-            'cves': kb.get('cves', [])[:3] if kb else [], 'hosts': len(data['hosts']),
-            'effort': 'patch' if patch else 'config', 'fix': (kb.get('solution', '') if kb else '')[:100]
+            'rank': i + 1, 'qid': qid,
+            'title': kb['title'] if kb else f"QID {qid}",
+            'cves': kb.get('cves', [])[:3] if kb else [],
+            'hosts': len(data['hosts']),
+            'severity': data['sev'],
+            'effort': 'patch' if patch else 'config',
+            'fix': (kb.get('solution', '') if kb else '')[:150]
         })
 
-    vuln_imgs = {img.get('imageId') for img in get_images(50, 5)}
-    at_risk = [c for c in get_containers(100) if c.get('imageId') in vuln_imgs]
+    vuln_imgs = concurrent.get('vuln_imgs') or []
+    containers = concurrent.get('containers') or []
+    vuln_img_ids = {img.get('imageId') for img in vuln_imgs}
+    at_risk = [c for c in containers if c.get('imageId') in vuln_img_ids]
     if at_risk:
         result['priorities'].append({'rank': len(result['priorities']) + 1, 'title': 'Vulnerable containers',
-                                     'containers': len(at_risk), 'effort': 'upgrade'})
+                                     'containers': len(at_risk), 'effort': 'upgrade', 'severity': 5})
         result['byEffort']['upgrade'] = len(at_risk)
         result['summary']['containersAtRisk'] = len(at_risk)
 
@@ -472,22 +619,57 @@ def get_weekly_priorities(limit: int = 10) -> dict:
 
 @mcp.tool()
 def investigate_cve(cve: str) -> dict:
-    """Investigate if your environment is affected by a specific CVE. Returns QIDs, KB info, and remediation."""
-    result = {'cve': cve, 'qids': [], 'severity': 0, 'title': '', 'patchAvailable': False, 'solution': ''}
+    """Investigate if your environment is affected by a specific CVE. Returns QIDs, affected hosts, KB details, and remediation."""
+    result = {'cve': cve, 'qids': [], 'affectedHosts': [], 'severity': 0,
+              'title': '', 'patchAvailable': False, 'solution': '',
+              'summary': {'hostsAffected': 0, 'patchAvailable': False}}
 
+    # Step 1: CVE -> QIDs + KB data
     qids = get_cve_qids(cve)
     result['qids'] = qids
 
     if qids:
-        kb = get_kb(qids[0])
+        kb = KB_CACHE.get(qids[0]) or get_kb(qids[0])
         if kb:
             result['title'] = kb.get('title', '')
             result['severity'] = kb.get('severity', 0)
             result['patchAvailable'] = kb.get('patch_available', False)
             result['solution'] = kb.get('solution', '')[:500]
+            result['diagnosis'] = kb.get('diagnosis', '')[:300]
             result['cves'] = kb.get('cves', [])
+            result['summary']['patchAvailable'] = kb.get('patch_available', False)
 
-    result['note'] = f"Use VMDR to find affected hosts with QID {qids[0] if qids else 'N/A'}"
+    # Step 2: Search VMDR detections for affected hosts (filter by QIDs for speed)
+    if qids:
+        qid_str = ','.join(str(q) for q in qids[:5])
+        data = api_get(
+            f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list"
+            f"&qids={qid_str}&status=Active&truncation_limit=200"
+            f"&show_qds=1&filter_superseded_qids=1",
+            timeout=180
+        )
+        if data:
+            try:
+                root = ET.fromstring(data)
+                qid_set = set(qids)
+                for host in root.findall('.//HOST'):
+                    hid = host.findtext('ID', '')
+                    ip = host.findtext('IP', '')
+                    hostname = host.findtext('DNS', '')
+                    for d in host.findall('.//DETECTION'):
+                        det_qid = int(d.findtext('QID', '0'))
+                        if det_qid in qid_set:
+                            result['affectedHosts'].append({
+                                'hostId': hid, 'ip': ip, 'hostname': hostname,
+                                'qid': det_qid,
+                                'status': d.findtext('STATUS', ''),
+                                'firstFound': d.findtext('FIRST_FOUND_DATETIME', ''),
+                            })
+                            break
+            except ET.ParseError:
+                pass
+
+    result['summary']['hostsAffected'] = len(result['affectedHosts'])
     return result
 
 
@@ -497,35 +679,46 @@ def get_security_posture() -> dict:
     health = 100
     result = {'healthScore': 0, 'assets': {'total': 0, 'highRisk': 0},
               'vulns': {'critical': 0, 'high': 0}, 'containers': {'total': 0, 'atRisk': 0},
-              'cloud': {'accounts': 0, 'failedControls': 0}, 'errors': []}
+              'cloud': {'accounts': 0, 'failedControls': 0}, 'warnings': []}
 
-    try:
-        assets = get_assets(100)
-        result['assets']['total'] = len(assets)
-        result['assets']['highRisk'] = len([a for a in assets if a.get('assetRiskScore', 0) >= 700])
-        if assets:
-            health -= int(result['assets']['highRisk'] / len(assets) * 50)
-    except:
-        result['errors'].append('assets')
+    # Run everything concurrently
+    concurrent = _run_concurrent(
+        asset_count=lambda: get_asset_count(),
+        high_risk=lambda: get_assets(100, 'truriskScore:[700-1000]'),
+        crit_dets=lambda: get_detections(5, 100, qds_min=90),
+        high_dets=lambda: get_detections(4, 100, qds_min=70),
+        images=lambda: get_images(50),
+        vuln_images=lambda: get_images(30, 5),
+        containers=lambda: get_containers(50),
+    )
 
-    try:
-        result['vulns']['critical'] = len(get_detections(5, 100))
-        result['vulns']['high'] = len(get_detections(4, 100))
-        if result['vulns']['critical'] > 50:
-            health -= 20
-        elif result['vulns']['critical'] > 10:
-            health -= 10
-    except:
-        result['errors'].append('vulns')
+    # Assets
+    total = concurrent.get('asset_count') or 0
+    high_risk = concurrent.get('high_risk') or []
+    result['assets']['total'] = total
+    result['assets']['highRisk'] = len(high_risk)
+    if total > 0:
+        health -= int(len(high_risk) / total * 50)
 
-    try:
-        imgs = get_images(50)
-        result['containers']['total'] = len(imgs)
-        vuln_ids = {i.get('imageId') for i in get_images(30, 5)}
-        result['containers']['atRisk'] = len([c for c in get_containers(50) if c.get('imageId') in vuln_ids])
-    except:
-        result['errors'].append('containers')
+    # Vulns
+    crit_dets = concurrent.get('crit_dets') or []
+    high_dets = concurrent.get('high_dets') or []
+    result['vulns']['critical'] = len(crit_dets)
+    result['vulns']['high'] = len(high_dets)
+    if len(crit_dets) > 50:
+        health -= 20
+    elif len(crit_dets) > 10:
+        health -= 10
 
+    # Containers
+    images = concurrent.get('images') or []
+    vuln_images = concurrent.get('vuln_images') or []
+    containers = concurrent.get('containers') or []
+    result['containers']['total'] = len(images)
+    vuln_ids = {i.get('imageId') for i in vuln_images}
+    result['containers']['atRisk'] = len([c for c in containers if c.get('imageId') in vuln_ids])
+
+    # Cloud (sequential since needs account ID from connectors)
     try:
         for p in ['aws', 'azure', 'gcp']:
             conns = get_connectors(p, 5)
@@ -535,11 +728,11 @@ def get_security_posture() -> dict:
                 if acc:
                     evals = get_evaluations(acc, p, 50)
                     result['cloud']['failedControls'] += len([e for e in evals if e.get('result') in ['FAIL', 'FAILED']])
-    except:
-        result['errors'].append('cloud')
+    except Exception:
+        result['warnings'].append('cloud data unavailable')
 
-    if not result['errors']:
-        del result['errors']
+    if not result['warnings']:
+        del result['warnings']
     result['healthScore'] = max(0, health)
     return result
 
@@ -549,10 +742,14 @@ def get_patch_status(limit: int = 20) -> dict:
     """Get patching coverage - how many assets need patches and which patches are most common."""
     result = {'coverage': 0, 'assetsTotal': 0, 'assetsNeedPatches': 0, 'topMissing': []}
 
-    assets = get_assets(200)
-    result['assetsTotal'] = len(assets)
+    # Run asset count and detections concurrently
+    concurrent = _run_concurrent(
+        total=lambda: get_asset_count(),
+        dets=lambda: get_detections(5, 200, qds_min=70),
+    )
 
-    dets = get_detections(5, 200)
+    result['assetsTotal'] = concurrent.get('total') or 0
+    dets = concurrent.get('dets') or []
 
     unique_qids = list(set(d['qid'] for d in dets))
     kb_data = get_kb_batch(unique_qids)
@@ -564,7 +761,8 @@ def get_patch_status(limit: int = 20) -> dict:
             qid_counts[d['qid']] = qid_counts.get(d['qid'], 0) + 1
 
     top_qids = sorted(qid_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
-    result['topMissing'] = [{'qid': q, 'count': c, 'title': kb_data.get(q, {}).get('title', '')} for q, c in top_qids]
+    result['topMissing'] = [{'qid': q, 'count': c, 'title': kb_data.get(q, {}).get('title', ''),
+                              'cves': kb_data.get(q, {}).get('cves', [])[:3]} for q, c in top_qids]
 
     hosts_need = set(d['host_id'] for d in dets if d['qid'] in qid_counts)
     result['assetsNeedPatches'] = len(hosts_need)
@@ -636,95 +834,35 @@ def get_asset_risk(asset_id: str) -> dict:
     """Get risk summary for a specific asset - risk score, top vulnerabilities, and remediation."""
     result = {'assetId': asset_id, 'riskScore': 0, 'vulns': []}
 
-    for a in get_assets(200):
-        if str(a.get('assetId')) == str(asset_id):
-            result['ip'] = a.get('address', '')
-            result['hostname'] = a.get('dnsName', '')
-            result['riskScore'] = int(a.get('assetRiskScore', 0))
-            break
+    # Run asset lookup and host detections concurrently
+    concurrent = _run_concurrent(
+        asset=lambda: get_asset_by_id(asset_id),
+        dets=lambda: get_host_detections(asset_id, severity=4),
+    )
 
-    asset_dets = [d for d in get_detections(4, 200) if d['host_id'] == asset_id][:10]
+    asset = concurrent.get('asset')
+    if asset:
+        result['ip'] = asset.get('address', '')
+        result['hostname'] = asset.get('dnsHostName', '') or asset.get('dnsName', '')
+        result['riskScore'] = int(asset.get('assetRiskScore') or asset.get('truriskScore') or 0)
+        result['os'] = (asset.get('operatingSystem') or {}).get('osName', '')
+        result['criticality'] = get_criticality(asset)
+
+    asset_dets = concurrent.get('dets') or []
     if asset_dets:
-        kb_data = get_kb_batch([d['qid'] for d in asset_dets])
-        for d in asset_dets:
+        kb_data = get_kb_batch([d['qid'] for d in asset_dets[:10]])
+        for d in asset_dets[:10]:
             kb = kb_data.get(d['qid'])
-            result['vulns'].append({'qid': d['qid'], 'title': kb['title'] if kb else '', 'severity': d['severity']})
+            result['vulns'].append({
+                'qid': d['qid'],
+                'title': kb['title'] if kb else '',
+                'severity': d['severity'],
+                'qds': d.get('qds', 0),
+                'patchAvailable': kb.get('patch_available', False) if kb else False,
+                'fix': (kb.get('solution', '') if kb else '')[:150],
+            })
 
     return result
-
-
-def get_criticality(asset):
-    """Extract criticality score from asset"""
-    crit = asset.get('criticality')
-    if isinstance(crit, dict):
-        return crit.get('score', 0) or 0
-    return crit or 0
-
-
-def fetch_all_eol(qql_filter, limit=1000, max_pages=50):
-    """Fetch EOL assets with pagination until limit or max_pages reached"""
-    token = get_bearer_token()
-    results = []
-    seen = set()
-    last_id = None
-
-    for _ in range(max_pages):
-        if len(results) >= limit:
-            break
-
-        url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize=100"
-        if last_id:
-            url += f"&lastSeenAssetId={last_id}"
-
-        filter_body = json.dumps({"filter": qql_filter})
-        req = Request(url, data=filter_body.encode(), method='POST')
-        req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
-        req.add_header('Content-Type', 'application/json')
-        req.add_header('X-Requested-With', 'qualys-mcp')
-
-        try:
-            with urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read())
-                assets = data.get('assetListData', {}).get('asset', [])
-                if not assets:
-                    break
-
-                for a in assets:
-                    aid = a.get('assetId')
-                    if aid in seen:
-                        continue
-                    seen.add(aid)
-
-                    if 'operatingSystem' in qql_filter:
-                        info = a.get('operatingSystem', {}) or {}
-                        name_field = 'os'
-                        name_val = info.get('osName', '') or 'Unknown'
-                    else:
-                        info = a.get('hardware', {}) or {}
-                        name_field = 'hardware'
-                        name_val = info.get('model', '') or 'Unknown'
-
-                    lifecycle = info.get('lifecycle', {}) or {}
-                    stage = lifecycle.get('stage', '')
-
-                    if is_eol_stage(stage):
-                        results.append({
-                            'assetId': aid,
-                            'address': a.get('address', ''),
-                            'hostname': a.get('dnsHostName', '') or a.get('dnsName', ''),
-                            name_field: name_val,
-                            'stage': stage,
-                            'criticality': get_criticality(a),
-                            'riskScore': a.get('assetRiskScore') or 0
-                        })
-
-                if not data.get('hasMore'):
-                    break
-                last_id = assets[-1].get('assetId')
-        except:
-            break
-
-    return results[:limit]
 
 
 @mcp.tool()
@@ -732,9 +870,15 @@ def get_tech_debt(limit: int = 100) -> dict:
     """Get EOL/EOS systems sorted by criticality. Default 100 (~25s). Use limit=500 for more (~2min)."""
     max_pages = max(5, (limit // 10) + 2)
 
+    # Run OS and hardware EOL fetches concurrently
+    concurrent = _run_concurrent(
+        os_eol=lambda: fetch_all_eol("operatingSystem.lifecycle.stage:`EOL` OR operatingSystem.lifecycle.stage:`EOL/EOS`", limit, max_pages),
+        hw_eol=lambda: fetch_all_eol("hardware.lifecycle.stage:`EOL/EOS`", limit, max_pages),
+    )
+
     result = {
-        'os': fetch_all_eol("operatingSystem.lifecycle.stage:`EOL/EOS`", limit, max_pages),
-        'hardware': fetch_all_eol("hardware.lifecycle.stage:`EOL/EOS`", limit, max_pages)
+        'os': concurrent.get('os_eol') or [],
+        'hardware': concurrent.get('hw_eol') or [],
     }
 
     result['os'].sort(key=lambda x: (-x['criticality'], -x['riskScore']))
@@ -748,20 +892,24 @@ def get_tech_debt(limit: int = 100) -> dict:
 def get_image_vulns(image_id: str, limit: int = 50) -> dict:
     """Get vulnerabilities for a specific container image. Returns severity breakdown and top vulns."""
     result = {
-        'imageId': image_id,
-        'repo': '',
-        'tag': '',
+        'imageId': image_id, 'repo': '', 'tag': '',
         'stats': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'total': 0},
         'vulns': []
     }
 
-    img = get_image_details(image_id)
+    # Run image details and vulns concurrently
+    concurrent = _run_concurrent(
+        img=lambda: get_image_details(image_id),
+        vulns=lambda: get_image_vulns_api(image_id),
+    )
+
+    img = concurrent.get('img')
     if img:
         result['repo'] = img.get('repo', '')
         result['tag'] = img.get('tag', '')
         result['created'] = img.get('created', '')
 
-    vulns = get_image_vulns_api(image_id)
+    vulns = concurrent.get('vulns') or []
     for v in vulns[:limit]:
         sev = v.get('severity', 0)
         if sev == 5:
@@ -774,10 +922,8 @@ def get_image_vulns(image_id: str, limit: int = 50) -> dict:
             result['stats']['low'] += 1
 
         result['vulns'].append({
-            'qid': v.get('qid'),
-            'cve': v.get('cveId', ''),
-            'severity': sev,
-            'title': v.get('title', ''),
+            'qid': v.get('qid'), 'cve': v.get('cveId', ''),
+            'severity': sev, 'title': v.get('title', ''),
             'fixVersion': v.get('fixedVersion', '')
         })
 
@@ -792,12 +938,10 @@ def get_expiring_certs(days: int = 30, limit: int = 50) -> dict:
     result = {
         'days': days,
         'stats': {'expiring': 0, 'expired': 0, 'valid': 0},
-        'expiring': [],
-        'expired': []
+        'expiring': [], 'expired': []
     }
 
-    today = datetime.utcnow()
-    cutoff = today + timedelta(days=days)
+    today = datetime.now(timezone.utc)
 
     certs = get_certificates(limit * 2, days)
     for c in certs:
@@ -826,7 +970,7 @@ def get_expiring_certs(days: int = 30, limit: int = 50) -> dict:
                         result['expiring'].append(cert_info)
                 else:
                     result['stats']['valid'] += 1
-            except:
+            except ValueError:
                 pass
 
     result['expiring'] = sorted(result['expiring'], key=lambda x: x.get('daysUntilExpiry', 999))
@@ -840,12 +984,18 @@ def get_threats(days: int = 7, limit: int = 50) -> dict:
     result = {
         'days': days,
         'stats': {'fim': 0, 'edr': 0, 'cdr': 0, 'critical': 0, 'high': 0},
-        'fim': [],
-        'edr': [],
-        'cdr': []
+        'fim': [], 'edr': [], 'cdr': []
     }
 
-    fim_events = get_fim_events(limit, days)
+    # Run all three sources concurrently
+    concurrent = _run_concurrent(
+        fim=lambda: get_fim_events(limit, days),
+        edr_crit=lambda: get_edr_events(limit, 'Critical'),
+        edr_high=lambda: get_edr_events(limit, 'High'),
+        cdr=lambda: get_cdr(days, limit),
+    )
+
+    fim_events = concurrent.get('fim') or []
     for e in fim_events:
         sev = e.get('severity', '')
         if sev in ['CRITICAL', '5']:
@@ -853,16 +1003,13 @@ def get_threats(days: int = 7, limit: int = 50) -> dict:
         elif sev in ['HIGH', '4']:
             result['stats']['high'] += 1
         result['fim'].append({
-            'action': e.get('action', ''),
-            'path': e.get('filePath', ''),
-            'hostname': e.get('hostname', ''),
-            'dateTime': e.get('dateTime', ''),
+            'action': e.get('action', ''), 'path': e.get('filePath', ''),
+            'hostname': e.get('hostname', ''), 'dateTime': e.get('dateTime', ''),
             'severity': sev
         })
     result['stats']['fim'] = len(fim_events)
 
-    edr_events = get_edr_events(limit, 'Critical')
-    edr_events += get_edr_events(limit, 'High')
+    edr_events = (concurrent.get('edr_crit') or []) + (concurrent.get('edr_high') or [])
     for e in edr_events[:limit]:
         sev = e.get('severity', '')
         if sev == 'Critical':
@@ -870,15 +1017,13 @@ def get_threats(days: int = 7, limit: int = 50) -> dict:
         elif sev == 'High':
             result['stats']['high'] += 1
         result['edr'].append({
-            'type': e.get('eventType', ''),
-            'process': e.get('processName', ''),
-            'hostname': e.get('hostname', ''),
-            'dateTime': e.get('dateTime', ''),
+            'type': e.get('eventType', ''), 'process': e.get('processName', ''),
+            'hostname': e.get('hostname', ''), 'dateTime': e.get('dateTime', ''),
             'severity': sev
         })
     result['stats']['edr'] = len(edr_events)
 
-    cdr_findings = get_cdr(days, limit)
+    cdr_findings = concurrent.get('cdr') or []
     for f in cdr_findings:
         sev = str(f.get('severity', ''))
         if sev in ['CRITICAL', '5']:
@@ -886,10 +1031,8 @@ def get_threats(days: int = 7, limit: int = 50) -> dict:
         elif sev in ['HIGH', '4']:
             result['stats']['high'] += 1
         result['cdr'].append({
-            'category': f.get('category', ''),
-            'resource': f.get('resourceId', ''),
-            'provider': f.get('cloudProvider', ''),
-            'dateTime': f.get('createdAt', ''),
+            'category': f.get('category', ''), 'resource': f.get('resourceId', ''),
+            'provider': f.get('cloudProvider', ''), 'dateTime': f.get('createdAt', ''),
             'severity': sev
         })
     result['stats']['cdr'] = len(cdr_findings)
@@ -903,8 +1046,7 @@ def get_webapp_vulns(severity: int = 4, limit: int = 50) -> dict:
     result = {
         'minSeverity': severity,
         'stats': {'critical': 0, 'high': 0, 'medium': 0, 'total': 0, 'webApps': 0},
-        'vulns': [],
-        'byWebApp': []
+        'vulns': [], 'byWebApp': []
     }
 
     findings = get_was_findings(limit * 2, severity)
@@ -931,11 +1073,8 @@ def get_webapp_vulns(severity: int = 4, limit: int = 50) -> dict:
                 webapp_vulns[webapp_id]['high'] += 1
 
         result['vulns'].append({
-            'qid': f.get('qid'),
-            'name': f.get('name', ''),
-            'severity': sev,
-            'url': f.get('url', ''),
-            'webApp': webapp_name
+            'qid': f.get('qid'), 'name': f.get('name', ''),
+            'severity': sev, 'url': f.get('url', ''), 'webApp': webapp_name
         })
 
     result['stats']['total'] = len(findings)
@@ -953,11 +1092,14 @@ def cache_status(clear: bool = False) -> dict:
     result = {
         'kb_entries': len(KB_CACHE),
         'detection_entries': len(DETECTION_CACHE),
-        'detection_cache_age_seconds': None
+        'detection_cache_age_seconds': None,
+        'bearer_token_age_seconds': None,
     }
 
     if DETECTION_CACHE_TIME:
-        result['detection_cache_age_seconds'] = int((datetime.utcnow() - DETECTION_CACHE_TIME).total_seconds())
+        result['detection_cache_age_seconds'] = int((datetime.now(timezone.utc) - DETECTION_CACHE_TIME).total_seconds())
+    if BEARER_TOKEN_TIME:
+        result['bearer_token_age_seconds'] = int((datetime.now(timezone.utc) - BEARER_TOKEN_TIME).total_seconds())
 
     if clear:
         KB_CACHE.clear()
@@ -967,64 +1109,6 @@ def cache_status(clear: bool = False) -> dict:
         result['kb_entries'] = 0
         result['detection_entries'] = 0
         result['detection_cache_age_seconds'] = None
-
-    return result
-
-
-@mcp.tool()
-def debug_api(endpoint: str = "eol") -> dict:
-    """Debug API connectivity. Use endpoint='eol' to test EOL query, 'assets' for basic assets, 'auth' for auth test."""
-    result = {'endpoint': endpoint, 'gateway_url': GATEWAY_URL, 'base_url': BASE_URL}
-
-    if endpoint == 'auth':
-        result['username_set'] = bool(USERNAME)
-        result['password_set'] = bool(PASSWORD)
-        result['auth_url'] = f"{GATEWAY_URL}/auth"
-        token = get_bearer_token()
-        result['token_obtained'] = bool(token)
-        result['token_preview'] = token[:20] + '...' if token else None
-        result['auth_error'] = AUTH_ERROR
-        return result
-
-    if endpoint == 'assets':
-        assets = get_assets(5)
-        result['count'] = len(assets)
-        result['sample'] = assets[:2] if assets else []
-        return result
-
-    if endpoint == 'eol':
-        url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize=5"
-        token = get_bearer_token()
-        result['token_obtained'] = bool(token)
-
-        filter_body = json.dumps({
-            "filters": [
-                {"field": "operatingSystem.lifecycle.stage", "operator": "IN", "value": "EOL,EOL/EOS,EOS"}
-            ]
-        })
-        result['request_url'] = url
-        result['request_body'] = filter_body
-
-        req = Request(url, data=filter_body.encode(), method='POST')
-        req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
-        req.add_header('Content-Type', 'application/json')
-        req.add_header('X-Requested-With', 'qualys-mcp')
-
-        try:
-            with urlopen(req, timeout=60) as resp:
-                raw = resp.read()
-                result['response_code'] = resp.status
-                result['response_length'] = len(raw)
-                data = json.loads(raw)
-                result['has_assetListData'] = 'assetListData' in data
-                result['asset_count'] = len(data.get('assetListData', {}).get('asset', []))
-                if result['asset_count'] > 0:
-                    result['sample_asset_raw'] = data['assetListData']['asset'][0]
-                    parsed = get_eol_assets("EOL,EOL/EOS,EOS", 5)
-                    result['parsed_count'] = len(parsed)
-                    result['sample_asset_parsed'] = parsed[0] if parsed else None
-        except Exception as e:
-            result['error'] = str(e)
 
     return result
 

@@ -3,8 +3,10 @@ package workflows
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/nelssec/qualys-mcp/internal/modules/car"
 	"github.com/nelssec/qualys-mcp/internal/modules/compliance"
@@ -76,28 +78,30 @@ func NewClientComplete(gavClient *gav.Client, vmdrClient *vmdr.Client, kbClient 
 	}
 }
 
+// --- Shared Types ---
+
 type AssetRiskSummary struct {
-	Asset           *AssetInfo         `json:"asset"`
-	RiskScore       int                `json:"riskScore"`
-	Criticality     int                `json:"criticality"`
-	TopVulns        []VulnInfo         `json:"topVulnerabilities"`
+	Asset            *AssetInfo        `json:"asset"`
+	RiskScore        int               `json:"riskScore"`
+	Criticality      int               `json:"criticality"`
+	TopVulns         []VulnInfo        `json:"topVulnerabilities"`
 	AvailablePatches []PatchInfo       `json:"availablePatches,omitempty"`
 	RemediationSteps []RemediationInfo `json:"remediationSteps,omitempty"`
 }
 
 type AssetInfo struct {
-	AssetID   string `json:"assetId"`
-	IP        string `json:"ip,omitempty"`
-	Hostname  string `json:"hostname,omitempty"`
-	OS        string `json:"os,omitempty"`
+	AssetID  string `json:"assetId"`
+	IP       string `json:"ip,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
+	OS       string `json:"os,omitempty"`
 }
 
 type VulnInfo struct {
-	QID       int      `json:"qid"`
-	Title     string   `json:"title,omitempty"`
-	Severity  int      `json:"severity"`
-	CVEs      []string `json:"cves,omitempty"`
-	FirstFound string  `json:"firstFound,omitempty"`
+	QID        int      `json:"qid"`
+	Title      string   `json:"title,omitempty"`
+	Severity   int      `json:"severity"`
+	CVEs       []string `json:"cves,omitempty"`
+	FirstFound string   `json:"firstFound,omitempty"`
 }
 
 type PatchInfo struct {
@@ -114,11 +118,11 @@ type RemediationInfo struct {
 }
 
 type RemediationPlan struct {
-	Vulnerability   *VulnDetails       `json:"vulnerability"`
-	AffectedAssets  []AffectedAsset    `json:"affectedAssets"`
-	Patches         []PatchInfo        `json:"availablePatches,omitempty"`
-	Scripts         []ScriptInfo       `json:"remediationScripts,omitempty"`
-	ManualSteps     string             `json:"manualRemediationSteps,omitempty"`
+	Vulnerability  *VulnDetails    `json:"vulnerability"`
+	AffectedAssets []AffectedAsset `json:"affectedAssets"`
+	Patches        []PatchInfo     `json:"availablePatches,omitempty"`
+	Scripts        []ScriptInfo    `json:"remediationScripts,omitempty"`
+	ManualSteps    string          `json:"manualRemediationSteps,omitempty"`
 }
 
 type VulnDetails struct {
@@ -144,14 +148,28 @@ type ScriptInfo struct {
 	Platform    string `json:"platform,omitempty"`
 }
 
+// --- GetAssetRiskSummary ---
+// Goroutines: GAV details, VMDR detections, PM patches all run concurrently.
+// KB batch enrichment after detections arrive.
+
 func (c *Client) GetAssetRiskSummary(ctx context.Context, assetID string) (*AssetRiskSummary, error) {
 	summary := &AssetRiskSummary{
 		Asset: &AssetInfo{AssetID: assetID},
 	}
 
+	var wg sync.WaitGroup
+	var detections []vmdr.Detection
+	var patches []patch.Patch
+
+	// Goroutine 1: GAV asset details
 	if c.gav != nil {
-		asset, err := c.gav.GetAssetDetails(ctx, assetID)
-		if err == nil && asset != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			asset, err := c.gav.GetAssetDetails(ctx, assetID)
+			if err != nil || asset == nil {
+				return
+			}
 			if ip, ok := asset.IP.(string); ok {
 				summary.Asset.IP = ip
 			}
@@ -167,68 +185,86 @@ func (c *Client) GetAssetRiskSummary(ctx context.Context, assetID string) (*Asse
 			if crit, ok := asset.Criticality.(float64); ok {
 				summary.Criticality = int(crit)
 			}
-		}
+		}()
 	}
 
+	// Goroutine 2: VMDR detections for this host
 	if c.vmdr != nil {
-		detections, err := c.vmdr.GetHostDetections(ctx, assetID, 4, 0)
-		if err == nil && len(detections) > 0 {
-			seen := make(map[int]bool)
-			for _, det := range detections {
-				if seen[det.QID] || len(summary.TopVulns) >= 10 {
-					continue
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dets, err := c.vmdr.GetHostDetections(ctx, assetID, 4, 0)
+			if err == nil {
+				detections = dets
+			}
+		}()
+	}
+
+	// Goroutine 3: PM patches for this asset
+	if c.pm != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p, err := c.pm.GetAssetPatches(ctx, assetID, 20)
+			if err == nil {
+				patches = p
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Process detections + batch KB enrichment
+	if len(detections) > 0 {
+		seen := make(map[int]bool)
+		var qidsToEnrich []int
+		for _, det := range detections {
+			if seen[det.QID] || len(qidsToEnrich) >= 10 {
+				continue
+			}
+			seen[det.QID] = true
+			qidsToEnrich = append(qidsToEnrich, det.QID)
+			summary.TopVulns = append(summary.TopVulns, VulnInfo{
+				QID:        det.QID,
+				Severity:   det.Severity,
+				FirstFound: det.FirstFound,
+			})
+		}
+
+		if c.kb != nil && len(qidsToEnrich) > 0 {
+			kbData, _ := c.kb.GetQIDBatch(ctx, qidsToEnrich)
+			for i := range summary.TopVulns {
+				if kb, ok := kbData[summary.TopVulns[i].QID]; ok {
+					summary.TopVulns[i].Title = kb.Title
+					summary.TopVulns[i].CVEs = kb.CVEs
+					summary.RemediationSteps = append(summary.RemediationSteps, RemediationInfo{
+						QID:      kb.QID,
+						Title:    kb.Title,
+						Solution: truncate(kb.Solution, 500),
+					})
 				}
-				seen[det.QID] = true
-
-				vuln := VulnInfo{
-					QID:        det.QID,
-					Severity:   det.Severity,
-					FirstFound: det.FirstFound,
-				}
-
-				if c.kb != nil {
-					kbEntry, err := c.kb.GetQID(ctx, det.QID)
-					if err == nil && kbEntry != nil {
-						vuln.Title = kbEntry.Title
-						vuln.CVEs = kbEntry.CVEs
-
-						summary.RemediationSteps = append(summary.RemediationSteps, RemediationInfo{
-							QID:      det.QID,
-							Title:    kbEntry.Title,
-							Solution: truncate(kbEntry.Solution, 500),
-						})
-					}
-				}
-
-				summary.TopVulns = append(summary.TopVulns, vuln)
 			}
 		}
 	}
 
-	if c.pm != nil {
-		patches, err := c.pm.GetAssetPatches(ctx, assetID, 20)
-		if err == nil {
-			for _, p := range patches {
-				if len(summary.AvailablePatches) >= 10 {
-					break
-				}
-				patchID := ""
-				if id, ok := p.ID.(string); ok {
-					patchID = id
-				} else if id, ok := p.ID.(float64); ok {
-					patchID = fmt.Sprintf("%.0f", id)
-				}
-				summary.AvailablePatches = append(summary.AvailablePatches, PatchInfo{
-					PatchID:  patchID,
-					Title:    p.Name,
-					Severity: p.Severity,
-				})
-			}
+	// Process patches
+	for _, p := range patches {
+		if len(summary.AvailablePatches) >= 10 {
+			break
 		}
+		patchID := interfaceToString(p.ID)
+		summary.AvailablePatches = append(summary.AvailablePatches, PatchInfo{
+			PatchID:  patchID,
+			Title:    p.Name,
+			Severity: p.Severity,
+		})
 	}
 
 	return summary, nil
 }
+
+// --- GetRemediationPlan ---
+// Goroutines: KB lookup, VMDR search, CAR scripts all run concurrently after QID resolution.
 
 func (c *Client) GetRemediationPlan(ctx context.Context, identifier string) (*RemediationPlan, error) {
 	plan := &RemediationPlan{}
@@ -246,6 +282,7 @@ func (c *Client) GetRemediationPlan(ctx context.Context, identifier string) (*Re
 		qid = q
 	}
 
+	// Resolve CVE -> QID first (must be sequential)
 	if cve != "" && c.kb != nil {
 		mapping, err := c.kb.GetCVEMapping(ctx, cve)
 		if err == nil && mapping != nil && len(mapping.QIDs) > 0 {
@@ -255,9 +292,17 @@ func (c *Client) GetRemediationPlan(ctx context.Context, identifier string) (*Re
 		}
 	}
 
+	// Now run KB details, VMDR search, and CAR scripts concurrently
+	var wg sync.WaitGroup
+
 	if c.kb != nil && qid > 0 {
-		kbEntry, err := c.kb.GetQID(ctx, qid)
-		if err == nil && kbEntry != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			kbEntry, err := c.kb.GetQID(ctx, qid)
+			if err != nil || kbEntry == nil {
+				return
+			}
 			plan.Vulnerability = &VulnDetails{
 				QID:         qid,
 				Title:       kbEntry.Title,
@@ -266,25 +311,24 @@ func (c *Client) GetRemediationPlan(ctx context.Context, identifier string) (*Re
 				Description: truncate(kbEntry.Diagnosis, 500),
 			}
 			plan.ManualSteps = truncate(kbEntry.Solution, 1000)
-		}
+		}()
 	}
 
 	if c.vmdr != nil && qid > 0 {
-		detections, err := c.vmdr.SearchDetections(ctx, fmt.Sprintf("%d", qid), 0, 0, 100)
-		if err == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			detections, err := c.vmdr.SearchDetections(ctx, fmt.Sprintf("%d", qid), 0, 0, 100)
+			if err != nil {
+				return
+			}
 			for _, hostDet := range detections {
-				ip := ""
-				hostname := ""
-				if hostDet.Host.IP != "" {
-					ip = hostDet.Host.IP
-				}
-
 				for _, det := range hostDet.Detections {
 					if det.QID == qid {
 						plan.AffectedAssets = append(plan.AffectedAssets, AffectedAsset{
 							AssetID:    hostDet.Host.ID,
-							IP:         ip,
-							Hostname:   hostname,
+							IP:         hostDet.Host.IP,
+							Hostname:   hostDet.Host.Hostname,
 							FirstFound: det.FirstFound,
 							Status:     det.Status,
 						})
@@ -292,21 +336,20 @@ func (c *Client) GetRemediationPlan(ctx context.Context, identifier string) (*Re
 					}
 				}
 			}
-		}
+		}()
 	}
 
 	if c.car != nil {
-		scripts, err := c.car.ListRemediationScripts(ctx, 50)
-		if err == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			scripts, err := c.car.ListRemediationScripts(ctx, 50)
+			if err != nil {
+				return
+			}
 			for _, s := range scripts {
-				scriptID := ""
-				if id, ok := s.ID.(string); ok {
-					scriptID = id
-				} else if id, ok := s.ID.(float64); ok {
-					scriptID = fmt.Sprintf("%.0f", id)
-				}
 				plan.Scripts = append(plan.Scripts, ScriptInfo{
-					ScriptID:    scriptID,
+					ScriptID:    interfaceToString(s.ID),
 					Title:       s.Title,
 					Description: s.Description,
 					Platform:    s.Platform,
@@ -315,21 +358,17 @@ func (c *Client) GetRemediationPlan(ctx context.Context, identifier string) (*Re
 					break
 				}
 			}
-		}
+		}()
 	}
 
+	wg.Wait()
 	return plan, nil
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
+// --- PrioritizeExternalRisk ---
 
 type ExternalRiskPriority struct {
-	Stats             ExternalRiskStats      `json:"stats"`
+	Stats               ExternalRiskStats    `json:"stats"`
 	CriticalWebAppVulns []WebAppVulnPriority `json:"criticalWebAppVulns,omitempty"`
 	CriticalInfraVulns  []InfraVulnPriority  `json:"criticalInfraVulns,omitempty"`
 	HighInfraVulns      []InfraVulnPriority  `json:"highInfraVulns,omitempty"`
@@ -337,10 +376,10 @@ type ExternalRiskPriority struct {
 }
 
 type ExternalRiskStats struct {
-	ExternalAssetCount int `json:"externalAssetCount"`
-	CriticalVulns      int `json:"criticalVulns"`
-	HighVulns          int `json:"highVulns"`
-	WebAppFindings     int `json:"webAppFindings"`
+	ExternalAssetCount int    `json:"externalAssetCount"`
+	CriticalVulns      int    `json:"criticalVulns"`
+	HighVulns          int    `json:"highVulns"`
+	WebAppFindings     int    `json:"webAppFindings"`
 	TagUsed            string `json:"tagUsed,omitempty"`
 }
 
@@ -386,15 +425,27 @@ func (c *Client) PrioritizeExternalRisk(ctx context.Context, tagName string, min
 	}
 
 	result := &ExternalRiskPriority{
-		Stats: ExternalRiskStats{
-			TagUsed: tagName,
-		},
+		Stats: ExternalRiskStats{TagUsed: tagName},
 	}
 
-	var tagID string
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// Data collectors
+	var tagAssets []gav.Asset
+	var critDets, highDets []vmdr.HostDetection
+	var wasFindings []was.Finding
+
+	// Goroutine 1: Resolve tag -> fetch assets
 	if c.gav != nil {
-		tags, err := c.gav.ListTags(ctx)
-		if err == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tags, err := c.gav.ListTags(ctx)
+			if err != nil {
+				return
+			}
+			var tagID string
 			for _, t := range tags {
 				if strings.EqualFold(t.Name, tagName) {
 					if id, ok := t.ID.(string); ok {
@@ -405,238 +456,184 @@ func (c *Client) PrioritizeExternalRisk(ctx context.Context, tagName string, min
 					break
 				}
 			}
-		}
+			if tagID != "" {
+				assets, err := c.gav.GetAssetsByTag(ctx, tagID, 200)
+				if err == nil {
+					mu.Lock()
+					tagAssets = assets
+					mu.Unlock()
+				}
+			}
+		}()
 	}
 
-	var externalAssetIDs []string
-	externalIPMap := make(map[string]bool)
-
-	if tagID != "" && c.gav != nil {
-		assets, err := c.gav.GetAssetsByTag(ctx, tagID, 200)
-		if err == nil {
-			result.Stats.ExternalAssetCount = len(assets)
-
-			assetMap := make(map[string]*ExternalAssetRisk)
-			for _, a := range assets {
-				assetID := ""
-				if id, ok := a.AssetID.(float64); ok {
-					assetID = fmt.Sprintf("%.0f", id)
-				} else if id, ok := a.AssetID.(string); ok {
-					assetID = id
-				}
-
-				ip := ""
-				if addr, ok := a.IP.(string); ok {
-					ip = addr
-					externalIPMap[ip] = true
-				}
-
-				name := ""
-				if n, ok := a.AssetName.(string); ok {
-					name = n
-				}
-
-				crit := 2
-				if c, ok := a.Criticality.(map[string]interface{}); ok {
-					if score, ok := c["score"].(float64); ok {
-						crit = int(score)
-					}
-				} else if c, ok := a.Criticality.(float64); ok {
-					crit = int(c)
-				}
-
-				if assetID != "" {
-					externalAssetIDs = append(externalAssetIDs, assetID)
-					assetMap[assetID] = &ExternalAssetRisk{
-						AssetID:     assetID,
-						IP:          ip,
-						Name:        name,
-						Criticality: crit,
-					}
-				}
-			}
-
-			type assetSort struct {
-				asset *ExternalAssetRisk
-			}
-			var sortable []assetSort
-			for _, a := range assetMap {
-				sortable = append(sortable, assetSort{a})
-			}
-			for i := 0; i < len(sortable)-1; i++ {
-				for j := i + 1; j < len(sortable); j++ {
-					if sortable[j].asset.Criticality > sortable[i].asset.Criticality {
-						sortable[i], sortable[j] = sortable[j], sortable[i]
-					}
-				}
-			}
-			for i := 0; i < len(sortable) && i < 10; i++ {
-				result.TopRiskAssets = append(result.TopRiskAssets, *sortable[i].asset)
-			}
-		}
-	}
-
-	if includeWebApps && c.was != nil {
-		findings, err := c.was.ListFindings(ctx, minSeverity, 100)
-		if err == nil {
-			result.Stats.WebAppFindings = len(findings)
-
-			qidFindings := make(map[int]*WebAppVulnPriority)
-			for _, f := range findings {
-				if f.Status == "FIXED" {
-					continue
-				}
-				if _, exists := qidFindings[f.QID]; !exists {
-					title := f.Name
-					remediation := ""
-
-					if c.kb != nil {
-						kbEntry, err := c.kb.GetQID(ctx, f.QID)
-						if err == nil && kbEntry != nil {
-							title = kbEntry.Title
-							remediation = truncate(kbEntry.Solution, 200)
-						}
-					}
-
-					qidFindings[f.QID] = &WebAppVulnPriority{
-						QID:          f.QID,
-						Title:        title,
-						Severity:     f.Severity,
-						Type:         f.Type,
-						AffectedURLs: []string{},
-						Remediation:  remediation,
-					}
-				}
-				if len(qidFindings[f.QID].AffectedURLs) < 3 {
-					qidFindings[f.QID].AffectedURLs = append(qidFindings[f.QID].AffectedURLs, f.URL)
-				}
-			}
-
-			type webSort struct {
-				vuln *WebAppVulnPriority
-			}
-			var sortableWeb []webSort
-			for _, v := range qidFindings {
-				sortableWeb = append(sortableWeb, webSort{v})
-			}
-			for i := 0; i < len(sortableWeb)-1; i++ {
-				for j := i + 1; j < len(sortableWeb); j++ {
-					if sortableWeb[j].vuln.Severity > sortableWeb[i].vuln.Severity ||
-						(sortableWeb[j].vuln.Severity == sortableWeb[i].vuln.Severity &&
-							len(sortableWeb[j].vuln.AffectedURLs) > len(sortableWeb[i].vuln.AffectedURLs)) {
-						sortableWeb[i], sortableWeb[j] = sortableWeb[j], sortableWeb[i]
-					}
-				}
-			}
-			for i := 0; i < len(sortableWeb) && i < limit; i++ {
-				result.CriticalWebAppVulns = append(result.CriticalWebAppVulns, *sortableWeb[i].vuln)
-			}
-		}
-	}
-
+	// Goroutine 2: Critical detections (sev 5)
 	if c.vmdr != nil {
-		critDets, err := c.vmdr.SearchDetectionsWithStatus(ctx, "", 5, 0, 500, "Active")
-		if err == nil {
-			qidCounts := make(map[int]int)
-			for _, host := range critDets {
-				for _, det := range host.Detections {
-					result.Stats.CriticalVulns++
-					qidCounts[det.QID]++
-				}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dets, err := c.vmdr.SearchDetectionsWithStatus(ctx, "", 5, 0, 500, "Active")
+			if err == nil {
+				mu.Lock()
+				critDets = dets
+				mu.Unlock()
 			}
+		}()
 
-			type qidSort struct {
-				qid   int
-				count int
+		// Goroutine 3: High detections (sev 4)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dets, err := c.vmdr.SearchDetectionsWithStatus(ctx, "", 4, 0, 500, "Active")
+			if err == nil {
+				mu.Lock()
+				highDets = dets
+				mu.Unlock()
 			}
-			var sortable []qidSort
-			for qid, count := range qidCounts {
-				sortable = append(sortable, qidSort{qid, count})
+		}()
+	}
+
+	// Goroutine 4: WAS findings
+	if includeWebApps && c.was != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			findings, err := c.was.ListFindings(ctx, minSeverity, 100)
+			if err == nil {
+				mu.Lock()
+				wasFindings = findings
+				mu.Unlock()
 			}
-			for i := 0; i < len(sortable)-1; i++ {
-				for j := i + 1; j < len(sortable); j++ {
-					if sortable[j].count > sortable[i].count {
-						sortable[i], sortable[j] = sortable[j], sortable[i]
-					}
-				}
+		}()
+	}
+
+	wg.Wait()
+
+	// Process tag assets
+	if len(tagAssets) > 0 {
+		result.Stats.ExternalAssetCount = len(tagAssets)
+		var riskAssets []ExternalAssetRisk
+		for _, a := range tagAssets {
+			assetID := interfaceToString(a.AssetID)
+			ip := ""
+			if addr, ok := a.IP.(string); ok {
+				ip = addr
 			}
-			for i := 0; i < len(sortable) && i < limit/2; i++ {
-				vuln := InfraVulnPriority{
-					QID:           sortable[i].qid,
-					Severity:      5,
-					AffectedHosts: sortable[i].count,
+			name := ""
+			if n, ok := a.AssetName.(string); ok {
+				name = n
+			}
+			crit := extractCriticality(a.Criticality)
+			if assetID != "" {
+				riskAssets = append(riskAssets, ExternalAssetRisk{
+					AssetID:     assetID,
+					IP:          ip,
+					Name:        name,
+					Criticality: crit,
+				})
+			}
+		}
+		sort.Slice(riskAssets, func(i, j int) bool {
+			return riskAssets[i].Criticality > riskAssets[j].Criticality
+		})
+		if len(riskAssets) > 10 {
+			riskAssets = riskAssets[:10]
+		}
+		result.TopRiskAssets = riskAssets
+	}
+
+	// Process critical infra vulns - collect QIDs for batch KB
+	critQIDCounts := countDetectionQIDs(critDets)
+	highQIDCounts := countDetectionQIDs(highDets)
+
+	result.Stats.CriticalVulns = sumCounts(critQIDCounts)
+	result.Stats.HighVulns = sumCounts(highQIDCounts)
+
+	// Batch KB enrichment for all unique QIDs
+	var allQIDs []int
+	for qid := range critQIDCounts {
+		allQIDs = append(allQIDs, qid)
+	}
+	for qid := range highQIDCounts {
+		if _, exists := critQIDCounts[qid]; !exists {
+			allQIDs = append(allQIDs, qid)
+		}
+	}
+
+	var kbData map[int]*knowledgebase.QIDInfo
+	if c.kb != nil && len(allQIDs) > 0 {
+		kbData, _ = c.kb.GetQIDBatch(ctx, allQIDs)
+	}
+
+	result.CriticalInfraVulns = buildInfraVulns(critQIDCounts, kbData, 5, limit/2)
+	result.HighInfraVulns = buildInfraVulns(highQIDCounts, kbData, 4, limit/2)
+
+	// Process WAS findings
+	if len(wasFindings) > 0 {
+		result.Stats.WebAppFindings = len(wasFindings)
+		qidFindings := make(map[int]*WebAppVulnPriority)
+		var wasQIDs []int
+		for _, f := range wasFindings {
+			if f.Status == "FIXED" {
+				continue
+			}
+			if _, exists := qidFindings[f.QID]; !exists {
+				qidFindings[f.QID] = &WebAppVulnPriority{
+					QID:          f.QID,
+					Title:        f.Name,
+					Severity:     f.Severity,
+					Type:         f.Type,
+					AffectedURLs: []string{},
 				}
-				if c.kb != nil {
-					kbEntry, err := c.kb.GetQID(ctx, sortable[i].qid)
-					if err == nil && kbEntry != nil {
-						vuln.Title = kbEntry.Title
-						vuln.CVEs = kbEntry.CVEs
-						vuln.Fix = truncate(kbEntry.Solution, 150)
-						vuln.PatchAvailable = kbEntry.PatchAvailable
-					}
-				}
-				result.CriticalInfraVulns = append(result.CriticalInfraVulns, vuln)
+				wasQIDs = append(wasQIDs, f.QID)
+			}
+			if len(qidFindings[f.QID].AffectedURLs) < 3 {
+				qidFindings[f.QID].AffectedURLs = append(qidFindings[f.QID].AffectedURLs, f.URL)
 			}
 		}
 
-		highDets, err := c.vmdr.SearchDetectionsWithStatus(ctx, "", 4, 0, 500, "Active")
-		if err == nil {
-			qidCounts := make(map[int]int)
-			for _, host := range highDets {
-				for _, det := range host.Detections {
-					result.Stats.HighVulns++
-					qidCounts[det.QID]++
+		// Batch KB for WAS QIDs
+		if c.kb != nil && len(wasQIDs) > 0 {
+			wasKB, _ := c.kb.GetQIDBatch(ctx, wasQIDs)
+			for qid, finding := range qidFindings {
+				if kb, ok := wasKB[qid]; ok {
+					finding.Title = kb.Title
+					finding.Remediation = truncate(kb.Solution, 200)
 				}
 			}
+		}
 
-			type qidSort struct {
-				qid   int
-				count int
+		var sortableWeb []*WebAppVulnPriority
+		for _, v := range qidFindings {
+			sortableWeb = append(sortableWeb, v)
+		}
+		sort.Slice(sortableWeb, func(i, j int) bool {
+			if sortableWeb[i].Severity != sortableWeb[j].Severity {
+				return sortableWeb[i].Severity > sortableWeb[j].Severity
 			}
-			var sortable []qidSort
-			for qid, count := range qidCounts {
-				sortable = append(sortable, qidSort{qid, count})
-			}
-			for i := 0; i < len(sortable)-1; i++ {
-				for j := i + 1; j < len(sortable); j++ {
-					if sortable[j].count > sortable[i].count {
-						sortable[i], sortable[j] = sortable[j], sortable[i]
-					}
-				}
-			}
-			for i := 0; i < len(sortable) && i < limit/2; i++ {
-				vuln := InfraVulnPriority{
-					QID:           sortable[i].qid,
-					Severity:      4,
-					AffectedHosts: sortable[i].count,
-				}
-				if c.kb != nil {
-					kbEntry, err := c.kb.GetQID(ctx, sortable[i].qid)
-					if err == nil && kbEntry != nil {
-						vuln.Title = kbEntry.Title
-						vuln.CVEs = kbEntry.CVEs
-						vuln.Fix = truncate(kbEntry.Solution, 150)
-						vuln.PatchAvailable = kbEntry.PatchAvailable
-					}
-				}
-				result.HighInfraVulns = append(result.HighInfraVulns, vuln)
-			}
+			return len(sortableWeb[i].AffectedURLs) > len(sortableWeb[j].AffectedURLs)
+		})
+		for i := 0; i < len(sortableWeb) && i < limit; i++ {
+			result.CriticalWebAppVulns = append(result.CriticalWebAppVulns, *sortableWeb[i])
 		}
 	}
 
 	return result, nil
 }
 
+// --- GetTechDebtSummary ---
+// Goroutines: EOL OS, EOS OS, EOL HW, EOL containers, and asset count all run concurrently.
+
 type TechDebtSummary struct {
-	Stats               TechDebtStats           `json:"stats"`
-	ByLifecycleStage    LifecycleBreakdown      `json:"byLifecycleStage"`
-	ByCriticality       CriticalityBreakdown    `json:"byCriticality"`
-	EOLOperatingSystems []OSDebtItem            `json:"eolOperatingSystems"`
-	EOLHardware         []HardwareDebtItem      `json:"eolHardware,omitempty"`
-	EOLContainerImages  []ContainerDebtItem     `json:"eolContainerImages,omitempty"`
-	TopAffectedAssets   []TechDebtAsset         `json:"topAffectedAssets"`
-	CriticalAssets      []TechDebtAsset         `json:"criticalAssets,omitempty"`
-	ReductionPlan       TechDebtReductionPlan   `json:"reductionPlan"`
+	Stats               TechDebtStats         `json:"stats"`
+	ByLifecycleStage    LifecycleBreakdown    `json:"byLifecycleStage"`
+	ByCriticality       CriticalityBreakdown  `json:"byCriticality"`
+	EOLOperatingSystems []OSDebtItem          `json:"eolOperatingSystems"`
+	EOLHardware         []HardwareDebtItem    `json:"eolHardware,omitempty"`
+	EOLContainerImages  []ContainerDebtItem   `json:"eolContainerImages,omitempty"`
+	TopAffectedAssets   []TechDebtAsset       `json:"topAffectedAssets"`
+	CriticalAssets      []TechDebtAsset       `json:"criticalAssets,omitempty"`
+	ReductionPlan       TechDebtReductionPlan `json:"reductionPlan"`
 }
 
 type TechDebtStats struct {
@@ -664,19 +661,19 @@ type CriticalityBreakdown struct {
 }
 
 type OSDebtItem struct {
-	Name         string `json:"name"`
-	Stage        string `json:"stage"`
-	AssetCount   int    `json:"assetCount"`
-	EOLDate      string `json:"eolDate,omitempty"`
-	EOSDate      string `json:"eosDate,omitempty"`
+	Name       string `json:"name"`
+	Stage      string `json:"stage"`
+	AssetCount int    `json:"assetCount"`
+	EOLDate    string `json:"eolDate,omitempty"`
+	EOSDate    string `json:"eosDate,omitempty"`
 }
 
 type HardwareDebtItem struct {
-	Name         string `json:"name"`
-	Stage        string `json:"stage"`
-	AssetCount   int    `json:"assetCount"`
-	EOSDate      string `json:"eosDate,omitempty"`
-	OBSDate      string `json:"obsDate,omitempty"`
+	Name       string `json:"name"`
+	Stage      string `json:"stage"`
+	AssetCount int    `json:"assetCount"`
+	EOSDate    string `json:"eosDate,omitempty"`
+	OBSDate    string `json:"obsDate,omitempty"`
 }
 
 type ContainerDebtItem struct {
@@ -688,28 +685,28 @@ type ContainerDebtItem struct {
 }
 
 type TechDebtAsset struct {
-	AssetID       string `json:"assetId"`
-	IP            string `json:"ip,omitempty"`
-	Hostname      string `json:"hostname,omitempty"`
-	OS            string `json:"os,omitempty"`
-	OSStage       string `json:"osLifecycleStage,omitempty"`
-	Criticality   int    `json:"criticality"`
+	AssetID     string `json:"assetId"`
+	IP          string `json:"ip,omitempty"`
+	Hostname    string `json:"hostname,omitempty"`
+	OS          string `json:"os,omitempty"`
+	OSStage     string `json:"osLifecycleStage,omitempty"`
+	Criticality int    `json:"criticality"`
 }
 
 type TechDebtReductionPlan struct {
-	TargetPercentage    float64              `json:"targetReductionPercentage"`
-	CurrentDebtAssets   int                  `json:"currentDebtAssets"`
-	TargetDebtAssets    int                  `json:"targetDebtAssets"`
-	AssetsToFix         int                  `json:"assetsToFix"`
-	PrioritizedActions  []TechDebtAction     `json:"prioritizedActions"`
+	TargetPercentage   float64          `json:"targetReductionPercentage"`
+	CurrentDebtAssets  int              `json:"currentDebtAssets"`
+	TargetDebtAssets   int              `json:"targetDebtAssets"`
+	AssetsToFix        int              `json:"assetsToFix"`
+	PrioritizedActions []TechDebtAction `json:"prioritizedActions"`
 }
 
 type TechDebtAction struct {
-	Priority     int    `json:"priority"`
-	OS           string `json:"operatingSystem"`
-	AssetCount   int    `json:"assetCount"`
-	Action       string `json:"action"`
-	Impact       string `json:"impact"`
+	Priority   int    `json:"priority"`
+	OS         string `json:"operatingSystem"`
+	AssetCount int    `json:"assetCount"`
+	Action     string `json:"action"`
+	Impact     string `json:"impact"`
 }
 
 func (c *Client) GetTechDebtSummary(ctx context.Context, reductionTarget float64, limit int) (*TechDebtSummary, error) {
@@ -721,218 +718,229 @@ func (c *Client) GetTechDebtSummary(ctx context.Context, reductionTarget float64
 	}
 
 	summary := &TechDebtSummary{
-		ReductionPlan: TechDebtReductionPlan{
-			TargetPercentage: reductionTarget,
-		},
+		ReductionPlan: TechDebtReductionPlan{TargetPercentage: reductionTarget},
 	}
 
-	osCounts := make(map[string]*OSDebtItem)
-	hwCounts := make(map[string]*HardwareDebtItem)
-	var criticalAssets []TechDebtAsset
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var totalCount int
+	var eolAssets []gav.EOLAsset
+	var eosAssets []gav.EOLAsset
+	var eolHW []gav.EOLAsset
+	var eolImages []container.EOLImage
 
 	if c.gav != nil {
-		totalCount, err := c.gav.CountAssets(ctx, "")
-		if err == nil {
-			summary.Stats.TotalAssets = totalCount
-		}
-
-		eolAssets, err := c.gav.GetEOLAssets(ctx, limit)
-		if err == nil {
-			summary.Stats.AssetsWithEOLOS = len(eolAssets)
-			for _, asset := range eolAssets {
-				osName := ""
-				if os, ok := asset.OS.(string); ok {
-					osName = os
-				}
-
-				stage := ""
-				if asset.OSLifecycle != nil {
-					stage = asset.OSLifecycle.Stage
-					if strings.Contains(stage, "EOS") {
-						summary.ByLifecycleStage.EOLEOS++
-					} else if stage == "EOL" {
-						summary.ByLifecycleStage.EOL++
-					}
-				}
-
-				if osName != "" {
-					if _, exists := osCounts[osName]; !exists {
-						osCounts[osName] = &OSDebtItem{
-							Name:       osName,
-							AssetCount: 0,
-						}
-						if asset.OSLifecycle != nil {
-							osCounts[osName].Stage = asset.OSLifecycle.Stage
-							osCounts[osName].EOLDate = asset.OSLifecycle.EOLDate
-							osCounts[osName].EOSDate = asset.OSLifecycle.EOSDate
-						}
-					}
-					osCounts[osName].AssetCount++
-				}
-
-				assetID := ""
-				if id, ok := asset.AssetID.(float64); ok {
-					assetID = fmt.Sprintf("%.0f", id)
-				} else if id, ok := asset.AssetID.(string); ok {
-					assetID = id
-				}
-
-				ip := ""
-				if addr, ok := asset.IP.(string); ok {
-					ip = addr
-				}
-
-				hostname := ""
-				if h, ok := asset.Hostname.(string); ok {
-					hostname = h
-				}
-
-				crit := 2
-				if cr, ok := asset.Criticality.(float64); ok {
-					crit = int(cr)
-				}
-
-				switch crit {
-				case 5:
-					summary.ByCriticality.Critical++
-				case 4:
-					summary.ByCriticality.High++
-				case 3:
-					summary.ByCriticality.Medium++
-				default:
-					summary.ByCriticality.Low++
-				}
-
-				debtAsset := TechDebtAsset{
-					AssetID:     assetID,
-					IP:          ip,
-					Hostname:    hostname,
-					OS:          osName,
-					OSStage:     stage,
-					Criticality: crit,
-				}
-
-				if crit >= 4 {
-					criticalAssets = append(criticalAssets, debtAsset)
-				}
-
-				if len(summary.TopAffectedAssets) < 20 {
-					summary.TopAffectedAssets = append(summary.TopAffectedAssets, debtAsset)
-				}
+		// Goroutine 1: Total asset count (fast endpoint)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			count, err := c.gav.CountAssets(ctx, "")
+			if err == nil {
+				mu.Lock()
+				totalCount = count
+				mu.Unlock()
 			}
-		}
+		}()
 
-		eosAssets, err := c.gav.GetEOSAssets(ctx, limit)
-		if err == nil {
-			summary.Stats.AssetsWithEOSOS = len(eosAssets)
-		}
-
-		eolHW, err := c.gav.GetEOLHardware(ctx, limit)
-		if err == nil {
-			summary.Stats.AssetsWithEOLHardware = len(eolHW)
-			for _, asset := range eolHW {
-				if asset.HWLifecycle != nil {
-					hwName := "Unknown Hardware"
-					if os, ok := asset.OS.(string); ok && os != "" {
-						hwName = os
-					}
-
-					if asset.HWLifecycle.Stage == "EOS" {
-						summary.ByLifecycleStage.EOS++
-					} else if asset.HWLifecycle.Stage == "OBS" {
-						summary.ByLifecycleStage.OBS++
-					}
-
-					if _, exists := hwCounts[hwName]; !exists {
-						hwCounts[hwName] = &HardwareDebtItem{
-							Name:       hwName,
-							Stage:      asset.HWLifecycle.Stage,
-							AssetCount: 0,
-							EOSDate:    asset.HWLifecycle.EOSDate,
-							OBSDate:    asset.HWLifecycle.OBSDate,
-						}
-					}
-					hwCounts[hwName].AssetCount++
-				}
+		// Goroutine 2: EOL OS assets
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assets, err := c.gav.GetEOLAssets(ctx, limit)
+			if err == nil {
+				mu.Lock()
+				eolAssets = assets
+				mu.Unlock()
 			}
-		}
+		}()
+
+		// Goroutine 3: EOS OS assets
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assets, err := c.gav.GetEOSAssets(ctx, limit)
+			if err == nil {
+				mu.Lock()
+				eosAssets = assets
+				mu.Unlock()
+			}
+		}()
+
+		// Goroutine 4: EOL Hardware
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assets, err := c.gav.GetEOLHardware(ctx, limit)
+			if err == nil {
+				mu.Lock()
+				eolHW = assets
+				mu.Unlock()
+			}
+		}()
 	}
 
+	// Goroutine 5: EOL Container images
 	if c.container != nil {
-		eolImages, err := c.container.GetEOLImages(ctx, limit)
-		if err == nil {
-			summary.Stats.EOLContainerImages = len(eolImages)
-			for _, img := range eolImages {
-				repo := ""
-				if r, ok := img.Repository.(string); ok {
-					repo = r
-				}
-				tag := ""
-				if t, ok := img.Tag.(string); ok {
-					tag = t
-				}
-				summary.EOLContainerImages = append(summary.EOLContainerImages, ContainerDebtItem{
-					ImageID:    img.ImageID,
-					Repository: repo,
-					Tag:        tag,
-					BaseOS:     img.BaseOS,
-					EOLDate:    img.EOLDate,
-				})
-				if len(summary.EOLContainerImages) >= 15 {
-					break
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			imgs, err := c.container.GetEOLImages(ctx, limit)
+			if err == nil {
+				mu.Lock()
+				eolImages = imgs
+				mu.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Process results
+	summary.Stats.TotalAssets = totalCount
+	summary.Stats.AssetsWithEOLOS = len(eolAssets)
+	summary.Stats.AssetsWithEOSOS = len(eosAssets)
+	summary.Stats.AssetsWithEOLHardware = len(eolHW)
+	summary.Stats.EOLContainerImages = len(eolImages)
+
+	// Process EOL OS
+	osCounts := make(map[string]*OSDebtItem)
+	var criticalAssets []TechDebtAsset
+	for _, asset := range eolAssets {
+		osName := ""
+		if os, ok := asset.OS.(string); ok {
+			osName = os
+		}
+		stage := ""
+		if asset.OSLifecycle != nil {
+			stage = asset.OSLifecycle.Stage
+			if strings.Contains(stage, "EOS") {
+				summary.ByLifecycleStage.EOLEOS++
+			} else if stage == "EOL" {
+				summary.ByLifecycleStage.EOL++
+			}
+		}
+		if osName != "" {
+			if _, exists := osCounts[osName]; !exists {
+				osCounts[osName] = &OSDebtItem{Name: osName}
+				if asset.OSLifecycle != nil {
+					osCounts[osName].Stage = asset.OSLifecycle.Stage
+					osCounts[osName].EOLDate = asset.OSLifecycle.EOLDate
+					osCounts[osName].EOSDate = asset.OSLifecycle.EOSDate
 				}
 			}
+			osCounts[osName].AssetCount++
+		}
+
+		assetID := interfaceToString(asset.AssetID)
+		ip := ""
+		if addr, ok := asset.IP.(string); ok {
+			ip = addr
+		}
+		hostname := ""
+		if h, ok := asset.Hostname.(string); ok {
+			hostname = h
+		}
+		crit := extractCriticality(asset.Criticality)
+
+		switch crit {
+		case 5:
+			summary.ByCriticality.Critical++
+		case 4:
+			summary.ByCriticality.High++
+		case 3:
+			summary.ByCriticality.Medium++
+		default:
+			summary.ByCriticality.Low++
+		}
+
+		debtAsset := TechDebtAsset{
+			AssetID: assetID, IP: ip, Hostname: hostname,
+			OS: osName, OSStage: stage, Criticality: crit,
+		}
+		if crit >= 4 {
+			criticalAssets = append(criticalAssets, debtAsset)
+		}
+		if len(summary.TopAffectedAssets) < 20 {
+			summary.TopAffectedAssets = append(summary.TopAffectedAssets, debtAsset)
 		}
 	}
 
-	type osSort struct {
-		item *OSDebtItem
-	}
-	var sortableOS []osSort
-	for _, item := range osCounts {
-		sortableOS = append(sortableOS, osSort{item})
-	}
-	for i := 0; i < len(sortableOS)-1; i++ {
-		for j := i + 1; j < len(sortableOS); j++ {
-			if sortableOS[j].item.AssetCount > sortableOS[i].item.AssetCount {
-				sortableOS[i], sortableOS[j] = sortableOS[j], sortableOS[i]
+	// Process EOL Hardware
+	hwCounts := make(map[string]*HardwareDebtItem)
+	for _, asset := range eolHW {
+		if asset.HWLifecycle != nil {
+			hwName := "Unknown Hardware"
+			if os, ok := asset.OS.(string); ok && os != "" {
+				hwName = os
 			}
+			if asset.HWLifecycle.Stage == "EOS" {
+				summary.ByLifecycleStage.EOS++
+			} else if asset.HWLifecycle.Stage == "OBS" {
+				summary.ByLifecycleStage.OBS++
+			}
+			if _, exists := hwCounts[hwName]; !exists {
+				hwCounts[hwName] = &HardwareDebtItem{
+					Name: hwName, Stage: asset.HWLifecycle.Stage,
+					EOSDate: asset.HWLifecycle.EOSDate, OBSDate: asset.HWLifecycle.OBSDate,
+				}
+			}
+			hwCounts[hwName].AssetCount++
 		}
 	}
-	for i := 0; i < len(sortableOS) && i < 20; i++ {
-		summary.EOLOperatingSystems = append(summary.EOLOperatingSystems, *sortableOS[i].item)
+
+	// Process container images
+	for _, img := range eolImages {
+		if len(summary.EOLContainerImages) >= 15 {
+			break
+		}
+		repo := ""
+		if r, ok := img.Repository.(string); ok {
+			repo = r
+		}
+		tag := ""
+		if t, ok := img.Tag.(string); ok {
+			tag = t
+		}
+		summary.EOLContainerImages = append(summary.EOLContainerImages, ContainerDebtItem{
+			ImageID: img.ImageID, Repository: repo, Tag: tag,
+			BaseOS: img.BaseOS, EOLDate: img.EOLDate,
+		})
+	}
+
+	// Sort and limit OS items
+	var sortedOS []*OSDebtItem
+	for _, item := range osCounts {
+		sortedOS = append(sortedOS, item)
+	}
+	sort.Slice(sortedOS, func(i, j int) bool {
+		return sortedOS[i].AssetCount > sortedOS[j].AssetCount
+	})
+	for i := 0; i < len(sortedOS) && i < 20; i++ {
+		summary.EOLOperatingSystems = append(summary.EOLOperatingSystems, *sortedOS[i])
 	}
 	summary.Stats.UniqueOSVersions = len(osCounts)
 
-	type hwSort struct {
-		item *HardwareDebtItem
-	}
-	var sortableHW []hwSort
+	// Sort and limit HW items
+	var sortedHW []*HardwareDebtItem
 	for _, item := range hwCounts {
-		sortableHW = append(sortableHW, hwSort{item})
+		sortedHW = append(sortedHW, item)
 	}
-	for i := 0; i < len(sortableHW)-1; i++ {
-		for j := i + 1; j < len(sortableHW); j++ {
-			if sortableHW[j].item.AssetCount > sortableHW[i].item.AssetCount {
-				sortableHW[i], sortableHW[j] = sortableHW[j], sortableHW[i]
-			}
-		}
-	}
-	for i := 0; i < len(sortableHW) && i < 15; i++ {
-		summary.EOLHardware = append(summary.EOLHardware, *sortableHW[i].item)
+	sort.Slice(sortedHW, func(i, j int) bool {
+		return sortedHW[i].AssetCount > sortedHW[j].AssetCount
+	})
+	for i := 0; i < len(sortedHW) && i < 15; i++ {
+		summary.EOLHardware = append(summary.EOLHardware, *sortedHW[i])
 	}
 
-	for i := 0; i < len(criticalAssets)-1; i++ {
-		for j := i + 1; j < len(criticalAssets); j++ {
-			if criticalAssets[j].Criticality > criticalAssets[i].Criticality {
-				criticalAssets[i], criticalAssets[j] = criticalAssets[j], criticalAssets[i]
-			}
-		}
-	}
+	// Sort critical assets
+	sort.Slice(criticalAssets, func(i, j int) bool {
+		return criticalAssets[i].Criticality > criticalAssets[j].Criticality
+	})
 	for i := 0; i < len(criticalAssets) && i < 15; i++ {
 		summary.CriticalAssets = append(summary.CriticalAssets, criticalAssets[i])
 	}
 
+	// Compute debt percentage and reduction plan
 	if summary.Stats.TotalAssets > 0 {
 		affectedAssets := summary.Stats.AssetsWithEOLOS + summary.Stats.AssetsWithEOLHardware
 		summary.Stats.TechDebtPercentage = float64(affectedAssets) / float64(summary.Stats.TotalAssets) * 100
@@ -945,31 +953,29 @@ func (c *Client) GetTechDebtSummary(ctx context.Context, reductionTarget float64
 
 	priority := 1
 	fixedSoFar := 0
-	for _, os := range sortableOS {
-		if fixedSoFar >= summary.ReductionPlan.AssetsToFix {
+	for _, os := range sortedOS {
+		if fixedSoFar >= summary.ReductionPlan.AssetsToFix || priority > 10 {
 			break
 		}
-		impact := float64(os.item.AssetCount) / float64(summary.ReductionPlan.AssetsToFix) * 100
+		impact := float64(os.AssetCount) / float64(summary.ReductionPlan.AssetsToFix) * 100
 		if impact > 100 {
 			impact = 100
 		}
-		action := TechDebtAction{
-			Priority:   priority,
-			OS:         os.item.Name,
-			AssetCount: os.item.AssetCount,
-			Action:     "Upgrade to supported OS version",
-			Impact:     fmt.Sprintf("Fixes %d assets (%.1f%% of target)", os.item.AssetCount, impact),
-		}
-		summary.ReductionPlan.PrioritizedActions = append(summary.ReductionPlan.PrioritizedActions, action)
-		fixedSoFar += os.item.AssetCount
+		summary.ReductionPlan.PrioritizedActions = append(summary.ReductionPlan.PrioritizedActions, TechDebtAction{
+			Priority: priority, OS: os.Name, AssetCount: os.AssetCount,
+			Action: "Upgrade to supported OS version",
+			Impact: fmt.Sprintf("Fixes %d assets (%.1f%% of target)", os.AssetCount, impact),
+		})
+		fixedSoFar += os.AssetCount
 		priority++
-		if priority > 10 {
-			break
-		}
 	}
 
 	return summary, nil
 }
+
+// --- GetWeeklyPriorities ---
+// Goroutines: VMDR detections and container vuln search run concurrently.
+// Batch KB enrichment after VMDR data arrives.
 
 type WeeklyPriorities struct {
 	Summary       WeeklyPrioritiesSummary `json:"summary"`
@@ -1020,25 +1026,59 @@ func (c *Client) GetWeeklyPriorities(ctx context.Context, limit int) (*WeeklyPri
 		TopPriorities: []PriorityItem{},
 	}
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var critDets []vmdr.HostDetection
+	var vulnContainers []container.VulnerableContainer
+
+	// Goroutine 1: VMDR critical detections
+	if c.vmdr != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dets, err := c.vmdr.SearchDetectionsWithStatus(ctx, "", 5, 0, 500, "Active")
+			if err != nil {
+				mu.Lock()
+				result.Warnings = append(result.Warnings, "VMDR data unavailable")
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			critDets = dets
+			mu.Unlock()
+		}()
+	}
+
+	// Goroutine 2: Vulnerable containers
+	if c.container != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			filter := container.VulnContainerFilter{Severity: 5}
+			vc, err := c.container.ListVulnerableContainers(ctx, filter, 50)
+			if err == nil {
+				mu.Lock()
+				vulnContainers = vc
+				mu.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Process VMDR detections
 	qidCounts := make(map[int]int)
 	qidSeverity := make(map[int]int)
 	qidHosts := make(map[int]map[string]bool)
 
-	if c.vmdr != nil {
-		critDets, err := c.vmdr.SearchDetectionsWithStatus(ctx, "", 5, 0, 500, "Active")
-		if err == nil {
-			for _, host := range critDets {
-				for _, det := range host.Detections {
-					qidCounts[det.QID]++
-					qidSeverity[det.QID] = det.Severity
-					if qidHosts[det.QID] == nil {
-						qidHosts[det.QID] = make(map[string]bool)
-					}
-					qidHosts[det.QID][host.Host.ID] = true
-				}
+	for _, host := range critDets {
+		for _, det := range host.Detections {
+			qidCounts[det.QID]++
+			qidSeverity[det.QID] = det.Severity
+			if qidHosts[det.QID] == nil {
+				qidHosts[det.QID] = make(map[string]bool)
 			}
-		} else {
-			result.Warnings = append(result.Warnings, "VMDR data unavailable")
+			qidHosts[det.QID][host.Host.ID] = true
 		}
 	}
 
@@ -1055,37 +1095,34 @@ func (c *Client) GetWeeklyPriorities(ctx context.Context, limit int) (*WeeklyPri
 
 	var sortedQIDs []qidInfo
 	for qid, count := range qidCounts {
-		hostCount := len(qidHosts[qid])
 		sortedQIDs = append(sortedQIDs, qidInfo{
-			qid:       qid,
-			count:     count,
-			severity:  qidSeverity[qid],
-			hostCount: hostCount,
+			qid: qid, count: count,
+			severity: qidSeverity[qid], hostCount: len(qidHosts[qid]),
 		})
 	}
+	sort.Slice(sortedQIDs, func(i, j int) bool {
+		scoreI := sortedQIDs[i].severity*1000 + sortedQIDs[i].hostCount*10
+		scoreJ := sortedQIDs[j].severity*1000 + sortedQIDs[j].hostCount*10
+		return scoreI > scoreJ
+	})
 
-	for i := 0; i < len(sortedQIDs)-1; i++ {
-		for j := i + 1; j < len(sortedQIDs); j++ {
-			scoreI := sortedQIDs[i].severity*1000 + sortedQIDs[i].hostCount*10
-			scoreJ := sortedQIDs[j].severity*1000 + sortedQIDs[j].hostCount*10
-			if scoreJ > scoreI {
-				sortedQIDs[i], sortedQIDs[j] = sortedQIDs[j], sortedQIDs[i]
-			}
-		}
-	}
-
+	// Batch KB enrichment for top QIDs
 	if c.kb != nil && len(sortedQIDs) > 0 {
 		maxEnrich := limit * 2
 		if maxEnrich > len(sortedQIDs) {
 			maxEnrich = len(sortedQIDs)
 		}
+		qidsToEnrich := make([]int, maxEnrich)
 		for i := 0; i < maxEnrich; i++ {
-			kbEntry, err := c.kb.GetQID(ctx, sortedQIDs[i].qid)
-			if err == nil && kbEntry != nil {
-				sortedQIDs[i].title = kbEntry.Title
-				sortedQIDs[i].cves = kbEntry.CVEs
-				sortedQIDs[i].patchAvail = kbEntry.PatchAvailable
-				sortedQIDs[i].solution = truncate(kbEntry.Solution, 100)
+			qidsToEnrich[i] = sortedQIDs[i].qid
+		}
+		kbData, _ := c.kb.GetQIDBatch(ctx, qidsToEnrich)
+		for i := 0; i < maxEnrich; i++ {
+			if kb, ok := kbData[sortedQIDs[i].qid]; ok {
+				sortedQIDs[i].title = kb.Title
+				sortedQIDs[i].cves = kb.CVEs
+				sortedQIDs[i].patchAvail = kb.PatchAvailable
+				sortedQIDs[i].solution = truncate(kb.Solution, 100)
 			}
 		}
 	}
@@ -1106,21 +1143,13 @@ func (c *Client) GetWeeklyPriorities(ctx context.Context, limit int) (*WeeklyPri
 			result.ByEffort.ConfigChange++
 		}
 
-		item := PriorityItem{
-			Priority:      priority,
-			Category:      "infrastructure",
-			Title:         q.title,
-			QIDs:          []int{q.qid},
-			CVEs:          q.cves,
-			AffectedHosts: q.hostCount,
-			Severity:      q.severity,
-			Effort:        effort,
-			Action:        q.solution,
-			Impact:        fmt.Sprintf("Fixes %d detections across %d hosts", q.count, q.hostCount),
-		}
-		result.TopPriorities = append(result.TopPriorities, item)
+		result.TopPriorities = append(result.TopPriorities, PriorityItem{
+			Priority: priority, Category: "infrastructure", Title: q.title,
+			QIDs: []int{q.qid}, CVEs: q.cves, AffectedHosts: q.hostCount,
+			Severity: q.severity, Effort: effort, Action: q.solution,
+			Impact: fmt.Sprintf("Fixes %d detections across %d hosts", q.count, q.hostCount),
+		})
 		result.BySource.Infrastructure++
-
 		for host := range qidHosts[q.qid] {
 			affectedHostsMap[host] = true
 		}
@@ -1131,48 +1160,45 @@ func (c *Client) GetWeeklyPriorities(ctx context.Context, limit int) (*WeeklyPri
 	result.Summary.AssetsAffected = len(affectedHostsMap)
 	result.Summary.PatchableItems = result.ByEffort.PatchAvailable
 
-	if c.container != nil {
-		filter := container.VulnContainerFilter{Severity: 5}
-		vulnContainers, err := c.container.ListVulnerableContainers(ctx, filter, 50)
-		if err == nil && len(vulnContainers) > 0 {
-			imageGroups := make(map[string][]container.VulnerableContainer)
-			for _, vc := range vulnContainers {
-				repo := ""
-				if r, ok := vc.ImageRepo.(string); ok {
-					repo = r
-				}
-				imageGroups[repo] = append(imageGroups[repo], vc)
+	// Process container vulns
+	if len(vulnContainers) > 0 {
+		imageGroups := make(map[string][]container.VulnerableContainer)
+		for _, vc := range vulnContainers {
+			repo := ""
+			if r, ok := vc.ImageRepo.(string); ok {
+				repo = r
 			}
+			imageGroups[repo] = append(imageGroups[repo], vc)
+		}
 
-			for repo, containers := range imageGroups {
-				if priority > limit+5 {
-					break
-				}
-				title := "Rebuild vulnerable container images"
-				if repo != "" {
-					title = fmt.Sprintf("Rebuild %s container images", repo)
-				}
-				item := PriorityItem{
-					Priority:           priority,
-					Category:           "container",
-					Title:              title,
-					AffectedContainers: len(containers),
-					Severity:           5,
-					Effort:             "upgradeRequired",
-					Action:             "Update base images and rebuild affected containers",
-					Impact:             fmt.Sprintf("Secures %d running containers", len(containers)),
-				}
-				result.TopPriorities = append(result.TopPriorities, item)
-				result.BySource.Containers++
-				result.ByEffort.UpgradeRequired++
-				result.Summary.ContainersAtRisk += len(containers)
-				priority++
+		for repo, containers := range imageGroups {
+			if priority > limit+5 {
+				break
 			}
+			title := "Rebuild vulnerable container images"
+			if repo != "" {
+				title = fmt.Sprintf("Rebuild %s container images", repo)
+			}
+			result.TopPriorities = append(result.TopPriorities, PriorityItem{
+				Priority: priority, Category: "container", Title: title,
+				AffectedContainers: len(containers), Severity: 5,
+				Effort: "upgradeRequired",
+				Action:  "Update base images and rebuild affected containers",
+				Impact:  fmt.Sprintf("Secures %d running containers", len(containers)),
+			})
+			result.BySource.Containers++
+			result.ByEffort.UpgradeRequired++
+			result.Summary.ContainersAtRisk += len(containers)
+			priority++
 		}
 	}
 
 	return result, nil
 }
+
+// --- InvestigateCVE ---
+// Goroutines: VMDR detection search, container image search, and CAR scripts all run concurrently
+// after CVE -> QID resolution.
 
 type CVEInvestigation struct {
 	CVE            string                  `json:"cve"`
@@ -1226,6 +1252,7 @@ func (c *Client) InvestigateCVE(ctx context.Context, cve string) (*CVEInvestigat
 		AffectedImages: []CVEAffectedImage{},
 	}
 
+	// Step 1: CVE -> QIDs (must happen first)
 	var qids []int
 	if c.kb != nil {
 		mapping, err := c.kb.GetCVEMapping(ctx, cve)
@@ -1234,13 +1261,13 @@ func (c *Client) InvestigateCVE(ctx context.Context, cve string) (*CVEInvestigat
 			result.QIDs = qids
 		}
 
+		// Get KB details for first QID (already cached from GetCVEMapping)
 		if len(qids) > 0 {
 			kbEntry, err := c.kb.GetQID(ctx, qids[0])
 			if err == nil && kbEntry != nil {
 				result.Details = &CVEDetails{
-					CVE:         cve,
-					Description: truncate(kbEntry.Diagnosis, 500),
-					Severity:    kbEntry.Severity,
+					CVE: cve, Description: truncate(kbEntry.Diagnosis, 500),
+					Severity: kbEntry.Severity,
 				}
 				result.ManualFix = truncate(kbEntry.Solution, 1000)
 				result.Summary.PatchAvailable = kbEntry.PatchAvailable
@@ -1250,34 +1277,52 @@ func (c *Client) InvestigateCVE(ctx context.Context, cve string) (*CVEInvestigat
 		result.Warnings = append(result.Warnings, "KnowledgeBase unavailable")
 	}
 
+	// Step 2: Run VMDR, container, and CAR searches concurrently
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
 	if c.vmdr != nil && len(qids) > 0 {
-		qidStr := fmt.Sprintf("%d", qids[0])
-		detections, err := c.vmdr.SearchDetections(ctx, qidStr, 0, 0, 200)
-		if err == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			qidStr := fmt.Sprintf("%d", qids[0])
+			detections, err := c.vmdr.SearchDetections(ctx, qidStr, 0, 0, 200)
+			if err != nil {
+				return
+			}
+			var hosts []CVEAffectedHost
 			for _, hostDet := range detections {
 				for _, det := range hostDet.Detections {
 					for _, qid := range qids {
 						if det.QID == qid {
-							host := CVEAffectedHost{
+							hosts = append(hosts, CVEAffectedHost{
 								AssetID:    hostDet.Host.ID,
 								IP:         hostDet.Host.IP,
+								Hostname:   hostDet.Host.Hostname,
 								FirstFound: det.FirstFound,
 								Status:     det.Status,
-							}
-							result.AffectedHosts = append(result.AffectedHosts, host)
+							})
 							break
 						}
 					}
 				}
 			}
-		}
+			mu.Lock()
+			result.AffectedHosts = hosts
+			mu.Unlock()
+		}()
 	}
-	result.Summary.TotalHostsAffected = len(result.AffectedHosts)
 
 	if c.container != nil {
-		filter := fmt.Sprintf("vulnerabilities.cveids:%s", cve)
-		images, err := c.container.SearchImages(ctx, filter, 100)
-		if err == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			filter := fmt.Sprintf("vulnerabilities.cveids:%s", cve)
+			images, err := c.container.SearchImages(ctx, filter, 100)
+			if err != nil {
+				return
+			}
+			var affected []CVEAffectedImage
 			for _, img := range images {
 				repo := ""
 				if r, ok := img.Repository.(string); ok {
@@ -1287,43 +1332,54 @@ func (c *Client) InvestigateCVE(ctx context.Context, cve string) (*CVEInvestigat
 				if t, ok := img.Tag.(string); ok {
 					tag = t
 				}
-				result.AffectedImages = append(result.AffectedImages, CVEAffectedImage{
-					ImageID:    img.ImageID,
-					Repository: repo,
-					Tag:        tag,
-					VulnCount:  img.VulnCount,
+				affected = append(affected, CVEAffectedImage{
+					ImageID: img.ImageID, Repository: repo,
+					Tag: tag, VulnCount: img.VulnCount,
 				})
 			}
-		}
+			mu.Lock()
+			result.AffectedImages = affected
+			mu.Unlock()
+		}()
 	}
-	result.Summary.TotalImagesAffected = len(result.AffectedImages)
 
 	if c.car != nil {
-		scripts, err := c.car.ListRemediationScripts(ctx, 20)
-		if err == nil && len(scripts) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			scripts, err := c.car.ListRemediationScripts(ctx, 20)
+			if err != nil || len(scripts) == 0 {
+				return
+			}
+			var scriptInfos []ScriptInfo
 			for _, s := range scripts {
-				scriptID := ""
-				if id, ok := s.ID.(string); ok {
-					scriptID = id
-				} else if id, ok := s.ID.(float64); ok {
-					scriptID = fmt.Sprintf("%.0f", id)
-				}
-				result.Scripts = append(result.Scripts, ScriptInfo{
-					ScriptID:    scriptID,
+				scriptInfos = append(scriptInfos, ScriptInfo{
+					ScriptID:    interfaceToString(s.ID),
 					Title:       s.Title,
 					Description: s.Description,
 					Platform:    s.Platform,
 				})
-				if len(result.Scripts) >= 5 {
+				if len(scriptInfos) >= 5 {
 					break
 				}
 			}
-			result.Summary.ScriptAvailable = len(result.Scripts) > 0
-		}
+			mu.Lock()
+			result.Scripts = scriptInfos
+			result.Summary.ScriptAvailable = len(scriptInfos) > 0
+			mu.Unlock()
+		}()
 	}
+
+	wg.Wait()
+
+	result.Summary.TotalHostsAffected = len(result.AffectedHosts)
+	result.Summary.TotalImagesAffected = len(result.AffectedImages)
 
 	return result, nil
 }
+
+// --- GetSecurityPosture ---
+// Goroutines: ALL data sources run concurrently (GAV, VMDR, Container, Cloud, Compliance).
 
 type SecurityPosture struct {
 	HealthScore     int                    `json:"healthScore"`
@@ -1336,7 +1392,7 @@ type SecurityPosture struct {
 }
 
 type AssetPostureStats struct {
-	TotalAssets    int            `json:"totalAssets"`
+	TotalAssets    int         `json:"totalAssets"`
 	ByOS           map[string]int `json:"byOperatingSystem,omitempty"`
 	ByCriticality  map[int]int    `json:"byCriticality,omitempty"`
 	HighRiskAssets int            `json:"highRiskAssets"`
@@ -1375,44 +1431,58 @@ type CompliancePostureStats struct {
 func (c *Client) GetSecurityPosture(ctx context.Context) (*SecurityPosture, error) {
 	result := &SecurityPosture{
 		AssetStats: AssetPostureStats{
-			ByOS:          make(map[string]int),
-			ByCriticality: make(map[int]int),
+			ByOS: make(map[string]int), ByCriticality: make(map[int]int),
 		},
-		CloudStats: CloudPostureStats{
-			ByProvider: make(map[string]int),
-		},
+		CloudStats: CloudPostureStats{ByProvider: make(map[string]int)},
 	}
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	healthPoints := 100
 
+	// Goroutine 1: GAV asset count + high risk
 	if c.gav != nil {
-		totalCount, err := c.gav.CountAssets(ctx, "")
-		if err == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			totalCount, err := c.gav.CountAssets(ctx, "")
+			if err != nil {
+				mu.Lock()
+				result.Warnings = append(result.Warnings, "Global AssetView unavailable")
+				mu.Unlock()
+				return
+			}
+			highRisk, _ := c.gav.GetHighRiskAssets(ctx, 700, 0, 100)
+			mu.Lock()
 			result.AssetStats.TotalAssets = totalCount
-		}
-
-		highRisk, err := c.gav.GetHighRiskAssets(ctx, 700, 0, 100)
-		if err == nil {
 			result.AssetStats.HighRiskAssets = len(highRisk)
-			if result.AssetStats.TotalAssets > 0 {
-				riskPercent := float64(len(highRisk)) / float64(result.AssetStats.TotalAssets) * 100
+			if totalCount > 0 {
+				riskPercent := float64(len(highRisk)) / float64(totalCount) * 100
 				healthPoints -= int(riskPercent)
 			}
-		}
-	} else {
-		result.Warnings = append(result.Warnings, "Global AssetView unavailable")
+			mu.Unlock()
+		}()
 	}
 
+	// Goroutine 2: VMDR stats
 	if c.vmdr != nil {
-		stats, err := c.vmdr.GetDetectionStats(ctx, "", 0, 0, "", 500)
-		if err == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stats, err := c.vmdr.GetDetectionStats(ctx, "", 0, 0, "", 500)
+			if err != nil {
+				mu.Lock()
+				result.Warnings = append(result.Warnings, "VMDR unavailable")
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
 			result.VulnStats.TotalDetections = stats.TotalDetections
 			result.VulnStats.Critical = stats.BySeverity[5]
 			result.VulnStats.High = stats.BySeverity[4]
 			result.VulnStats.Medium = stats.BySeverity[3]
 			result.VulnStats.Low = stats.BySeverity[1] + stats.BySeverity[2]
 			result.VulnStats.ActiveCount = stats.TotalDetections
-
 			if result.VulnStats.Critical > 50 {
 				healthPoints -= 20
 			} else if result.VulnStats.Critical > 20 {
@@ -1420,90 +1490,189 @@ func (c *Client) GetSecurityPosture(ctx context.Context) (*SecurityPosture, erro
 			} else if result.VulnStats.Critical > 0 {
 				healthPoints -= 5
 			}
-		}
-	} else {
-		result.Warnings = append(result.Warnings, "VMDR unavailable")
+			mu.Unlock()
+		}()
 	}
 
+	// Goroutine 3: Container stats (images + running + vuln in parallel)
 	if c.container != nil {
-		images, err := c.container.ListImages(ctx, "", 500)
-		if err == nil {
-			result.ContainerStats.TotalImages = len(images)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var innerWg sync.WaitGroup
+
+			var images []container.Image
+			var containers []container.Container
+			var vulnContainers []container.VulnerableContainer
+
+			innerWg.Add(3)
+			go func() {
+				defer innerWg.Done()
+				imgs, err := c.container.ListImages(ctx, "", 500)
+				if err == nil {
+					images = imgs
+				}
+			}()
+			go func() {
+				defer innerWg.Done()
+				ctrs, err := c.container.ListContainers(ctx, "state:RUNNING", 500)
+				if err == nil {
+					containers = ctrs
+				}
+			}()
+			go func() {
+				defer innerWg.Done()
+				filter := container.VulnContainerFilter{Severity: 5}
+				vc, err := c.container.ListVulnerableContainers(ctx, filter, 100)
+				if err == nil {
+					vulnContainers = vc
+				}
+			}()
+			innerWg.Wait()
+
+			vulnImageCount := 0
 			for _, img := range images {
 				if img.VulnCount > 0 {
-					result.ContainerStats.VulnerableImages++
+					vulnImageCount++
 				}
 			}
-		}
 
-		containers, err := c.container.ListContainers(ctx, "state:RUNNING", 500)
-		if err == nil {
+			mu.Lock()
+			result.ContainerStats.TotalImages = len(images)
+			result.ContainerStats.VulnerableImages = vulnImageCount
 			result.ContainerStats.RunningContainers = len(containers)
-		}
-
-		filter := container.VulnContainerFilter{Severity: 5}
-		vulnContainers, err := c.container.ListVulnerableContainers(ctx, filter, 100)
-		if err == nil {
 			result.ContainerStats.ContainersAtRisk = len(vulnContainers)
-			if result.ContainerStats.RunningContainers > 0 {
-				riskPercent := float64(len(vulnContainers)) / float64(result.ContainerStats.RunningContainers) * 100
+			if len(containers) > 0 {
+				riskPercent := float64(len(vulnContainers)) / float64(len(containers)) * 100
 				healthPoints -= int(riskPercent / 5)
 			}
-		}
+			mu.Unlock()
+		}()
 	}
 
+	// Goroutine 4: Cloud connectors + evaluations + CDR
 	if c.totalcloud != nil {
-		for _, provider := range []string{"aws", "azure", "gcp"} {
-			connectors, err := c.totalcloud.ListConnectors(ctx, provider, 100)
-			if err == nil && len(connectors) > 0 {
-				result.CloudStats.ByProvider[strings.ToUpper(provider)] = len(connectors)
-				result.CloudStats.TotalAccounts += len(connectors)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Fetch all provider connectors concurrently
+			type providerResult struct {
+				provider   string
+				connectors []totalcloud.Connector
 			}
-		}
-
-		if result.CloudStats.TotalAccounts > 0 {
-			connectors, _ := c.totalcloud.ListConnectors(ctx, "aws", 1)
-			if len(connectors) > 0 {
-				accountID := connectors[0].AwsAccountID
-				if accountID != "" {
-					evals, err := c.totalcloud.ListEvaluations(ctx, accountID, "aws", 500)
+			providers := []string{"aws", "azure", "gcp"}
+			provResults := make([]providerResult, len(providers))
+			var provWg sync.WaitGroup
+			for idx, p := range providers {
+				provWg.Add(1)
+				go func(i int, prov string) {
+					defer provWg.Done()
+					conns, err := c.totalcloud.ListConnectors(ctx, prov, 100)
 					if err == nil {
-						stats := totalcloud.GetEvaluationStats(evals, 0)
-						result.CloudStats.FailedControls = stats.FailedControls
-						result.CloudStats.PassedControls = stats.PassedControls
+						provResults[i] = providerResult{provider: prov, connectors: conns}
+					}
+				}(idx, p)
+			}
+
+			// CDR findings concurrently
+			var cdrFindings []totalcloud.CDRFinding
+			provWg.Add(1)
+			go func() {
+				defer provWg.Done()
+				findings, err := c.totalcloud.ListCDRFindings(ctx, "", "", 7, 100)
+				if err == nil {
+					cdrFindings = findings
+				}
+			}()
+			provWg.Wait()
+
+			// Process connector results
+			var firstAccountID, firstProvider string
+			mu.Lock()
+			for _, pr := range provResults {
+				if len(pr.connectors) > 0 {
+					result.CloudStats.ByProvider[strings.ToUpper(pr.provider)] = len(pr.connectors)
+					result.CloudStats.TotalAccounts += len(pr.connectors)
+					if firstAccountID == "" {
+						firstProvider = pr.provider
+						switch pr.provider {
+						case "aws":
+							firstAccountID = pr.connectors[0].AwsAccountID
+						case "azure":
+							firstAccountID = pr.connectors[0].AzureSubID
+						case "gcp":
+							firstAccountID = pr.connectors[0].GcpProjectID
+						}
 					}
 				}
 			}
-		}
+			mu.Unlock()
 
-		findings, err := c.totalcloud.ListCDRFindings(ctx, "", "", 7, 100)
-		if err == nil {
-			result.CloudStats.RecentFindings = len(findings)
-			if len(findings) > 20 {
+			// Fetch evaluations for first account
+			if firstAccountID != "" {
+				evals, err := c.totalcloud.ListEvaluations(ctx, firstAccountID, firstProvider, 500)
+				if err == nil {
+					stats := totalcloud.GetEvaluationStats(evals, 0)
+					mu.Lock()
+					result.CloudStats.FailedControls = stats.FailedControls
+					result.CloudStats.PassedControls = stats.PassedControls
+					mu.Unlock()
+				}
+			}
+
+			mu.Lock()
+			result.CloudStats.RecentFindings = len(cdrFindings)
+			if len(cdrFindings) > 20 {
 				healthPoints -= 10
 			}
-		}
+			mu.Unlock()
+		}()
 	}
 
+	// Goroutine 5: Compliance
 	if c.compliance != nil {
-		policies, err := c.compliance.ListPolicies(ctx, 100)
-		if err == nil {
-			result.ComplianceStats.TotalPolicies = len(policies)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var innerWg sync.WaitGroup
+			var policies []compliance.Policy
+			var scans []compliance.Scan
 
-		scans, err := c.compliance.ListScans(ctx, "Running", 100)
-		if err == nil {
+			innerWg.Add(2)
+			go func() {
+				defer innerWg.Done()
+				p, err := c.compliance.ListPolicies(ctx, 100)
+				if err == nil {
+					policies = p
+				}
+			}()
+			go func() {
+				defer innerWg.Done()
+				s, err := c.compliance.ListScans(ctx, "Running", 100)
+				if err == nil {
+					scans = s
+				}
+			}()
+			innerWg.Wait()
+
+			mu.Lock()
+			result.ComplianceStats.TotalPolicies = len(policies)
 			result.ComplianceStats.ActiveScans = len(scans)
-		}
+			mu.Unlock()
+		}()
 	}
+
+	wg.Wait()
 
 	if healthPoints < 0 {
 		healthPoints = 0
 	}
 	result.HealthScore = healthPoints
-
 	return result, nil
 }
+
+// --- GetPatchStatus ---
+// Optimized: uses VMDR stats instead of N+1 PM asset calls.
 
 type PatchStatus struct {
 	Summary         PatchStatusSummary `json:"summary"`
@@ -1563,148 +1732,108 @@ func (c *Client) GetPatchStatus(ctx context.Context, limit int) (*PatchStatus, e
 		RecentJobs:      []PatchJobInfo{},
 	}
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// Goroutine 1: Asset count
 	if c.gav != nil {
-		totalCount, err := c.gav.CountAssets(ctx, "")
-		if err == nil {
-			result.Summary.TotalAssets = totalCount
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			totalCount, err := c.gav.CountAssets(ctx, "")
+			if err == nil {
+				mu.Lock()
+				result.Summary.TotalAssets = totalCount
+				mu.Unlock()
+			}
+		}()
 	}
 
-	assetPatchCounts := make(map[string]int)
-	assetCritCounts := make(map[string]int)
-	patchCounts := make(map[string]int)
-	patchDetails := make(map[string]*MissingPatchItem)
+	// Goroutine 2: VMDR detections for patchable analysis
+	var critDets []vmdr.HostDetection
+	if c.vmdr != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dets, err := c.vmdr.SearchDetectionsWithStatus(ctx, "", 5, 0, 500, "Active")
+			if err == nil {
+				mu.Lock()
+				critDets = dets
+				mu.Unlock()
+			}
+		}()
+	}
 
+	// Goroutine 3: PM patches (list available, not per-asset)
 	if c.pm != nil {
-		assets, err := c.pm.ListAssets(ctx, "", 200)
-		if err == nil {
-			for _, asset := range assets {
-				assetID := ""
-				if id, ok := asset.ID.(float64); ok {
-					assetID = fmt.Sprintf("%.0f", id)
-				} else if id, ok := asset.ID.(string); ok {
-					assetID = id
-				}
-				if assetID == "" {
-					continue
-				}
-
-				patches, err := c.pm.GetAssetPatches(ctx, assetID, 50)
-				if err == nil && len(patches) > 0 {
-					result.Summary.AssetsNeedingPatches++
-					assetPatchCounts[assetID] = len(patches)
-
-					for _, p := range patches {
-						patchID := ""
-						if id, ok := p.ID.(string); ok {
-							patchID = id
-						} else if id, ok := p.ID.(float64); ok {
-							patchID = fmt.Sprintf("%.0f", id)
-						}
-						if patchID == "" {
-							continue
-						}
-
-						patchCounts[patchID]++
-						result.Summary.TotalMissingPatches++
-
-						if p.Severity == "Critical" || p.Severity == "CRITICAL" {
-							assetCritCounts[assetID]++
-							result.Summary.CriticalMissing++
-						}
-
-						if patchDetails[patchID] == nil {
-							patchDetails[patchID] = &MissingPatchItem{
-								PatchID:  patchID,
-								Title:    p.Name,
-								Severity: p.Severity,
-							}
-						}
-						patchDetails[patchID].AffectedHosts++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			patches, err := c.pm.ListPatches(ctx, "Critical", limit*2)
+			if err == nil {
+				mu.Lock()
+				for _, p := range patches {
+					if len(result.CriticalPatches) >= limit {
+						break
+					}
+					patchID := interfaceToString(p.ID)
+					result.CriticalPatches = append(result.CriticalPatches, MissingPatchItem{
+						PatchID:  patchID,
+						Title:    p.Name,
+						Severity: p.Severity,
+					})
+					result.Summary.TotalMissingPatches++
+					if p.Severity == "Critical" || p.Severity == "CRITICAL" {
+						result.Summary.CriticalMissing++
 					}
 				}
+				mu.Unlock()
 			}
-		} else {
-			result.Warnings = append(result.Warnings, "Patch Management asset data unavailable")
-		}
+		}()
+	}
 
-		jobs, err := c.pm.ListJobs(ctx, "", 10)
-		if err == nil {
-			for _, j := range jobs {
-				jobID := ""
-				if id, ok := j.ID.(float64); ok {
-					jobID = fmt.Sprintf("%.0f", id)
-				} else if id, ok := j.ID.(string); ok {
-					jobID = id
+	// Goroutine 4: PM recent jobs
+	if c.pm != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			jobs, err := c.pm.ListJobs(ctx, "", 10)
+			if err == nil {
+				mu.Lock()
+				for _, j := range jobs {
+					result.RecentJobs = append(result.RecentJobs, PatchJobInfo{
+						JobID:  interfaceToString(j.ID),
+						Status: j.Status,
+					})
 				}
-				result.RecentJobs = append(result.RecentJobs, PatchJobInfo{
-					JobID:  jobID,
-					Status: j.Status,
-				})
+				mu.Unlock()
 			}
-		}
-	} else {
-		result.Warnings = append(result.Warnings, "Patch Management unavailable")
+		}()
 	}
 
-	type patchSort struct {
-		id    string
-		count int
-	}
-	var sortedPatches []patchSort
-	for id, count := range patchCounts {
-		sortedPatches = append(sortedPatches, patchSort{id, count})
-	}
-	for i := 0; i < len(sortedPatches)-1; i++ {
-		for j := i + 1; j < len(sortedPatches); j++ {
-			if sortedPatches[j].count > sortedPatches[i].count {
-				sortedPatches[i], sortedPatches[j] = sortedPatches[j], sortedPatches[i]
-			}
-		}
-	}
-	for i := 0; i < len(sortedPatches) && i < limit; i++ {
-		if detail := patchDetails[sortedPatches[i].id]; detail != nil {
-			result.CriticalPatches = append(result.CriticalPatches, *detail)
-		}
-	}
+	wg.Wait()
 
-	type assetSort struct {
-		id    string
-		count int
-		crit  int
-	}
-	var sortedAssets []assetSort
-	for id, count := range assetPatchCounts {
-		sortedAssets = append(sortedAssets, assetSort{id, count, assetCritCounts[id]})
-	}
-	for i := 0; i < len(sortedAssets)-1; i++ {
-		for j := i + 1; j < len(sortedAssets); j++ {
-			if sortedAssets[j].crit > sortedAssets[i].crit ||
-				(sortedAssets[j].crit == sortedAssets[i].crit && sortedAssets[j].count > sortedAssets[i].count) {
-				sortedAssets[i], sortedAssets[j] = sortedAssets[j], sortedAssets[i]
-			}
+	// Batch KB enrichment for VMDR QIDs to determine patchable vs not
+	if c.kb != nil && len(critDets) > 0 {
+		qidCounts := countDetectionQIDs(critDets)
+		var qids []int
+		for qid := range qidCounts {
+			qids = append(qids, qid)
 		}
-	}
-	for i := 0; i < len(sortedAssets) && i < limit; i++ {
-		result.AssetsByPatch = append(result.AssetsByPatch, AssetPatchInfo{
-			AssetID:       sortedAssets[i].id,
-			MissingCount:  sortedAssets[i].count,
-			CriticalCount: sortedAssets[i].crit,
-		})
-	}
+		kbData, _ := c.kb.GetQIDBatch(ctx, qids)
 
-	if c.vmdr != nil && c.kb != nil {
-		stats, err := c.vmdr.GetDetectionStats(ctx, "", 5, 0, "", 500)
-		if err == nil {
-			for _, top := range stats.TopQIDs {
-				kbEntry, err := c.kb.GetQID(ctx, top.QID)
-				if err == nil && kbEntry != nil && kbEntry.PatchAvailable {
+		hostsNeedingPatches := make(map[string]bool)
+		for _, host := range critDets {
+			for _, det := range host.Detections {
+				if kb, ok := kbData[det.QID]; ok && kb.PatchAvailable {
+					hostsNeedingPatches[host.Host.ID] = true
 					result.Breakdown.Patchable++
 				} else {
 					result.Breakdown.NotPatchable++
 				}
 			}
 		}
+		result.Summary.AssetsNeedingPatches = len(hostsNeedingPatches)
 	}
 
 	if result.Summary.TotalAssets > 0 {
@@ -1714,6 +1843,8 @@ func (c *Client) GetPatchStatus(ctx context.Context, limit int) (*PatchStatus, e
 
 	return result, nil
 }
+
+// --- GetComplianceGaps ---
 
 type ComplianceGaps struct {
 	Summary         ComplianceGapsSummary `json:"summary"`
@@ -1768,94 +1899,131 @@ func (c *Client) GetComplianceGaps(ctx context.Context, limit int) (*ComplianceG
 		CriticalGaps:    []CriticalGap{},
 	}
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// Goroutine 1: Compliance policies
 	if c.compliance != nil {
-		policies, err := c.compliance.ListPolicies(ctx, 100)
-		if err == nil {
-			result.Summary.TotalPolicies = len(policies)
-			for _, p := range policies {
-				result.Summary.TotalControls += p.ControlCount
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			policies, err := c.compliance.ListPolicies(ctx, 100)
+			if err == nil {
+				mu.Lock()
+				result.Summary.TotalPolicies = len(policies)
+				for _, p := range policies {
+					result.Summary.TotalControls += p.ControlCount
+				}
+				mu.Unlock()
+			} else {
+				mu.Lock()
+				result.Warnings = append(result.Warnings, "Policy data unavailable")
+				mu.Unlock()
 			}
-		} else {
-			result.Warnings = append(result.Warnings, "Policy data unavailable")
-		}
-	} else {
-		result.Warnings = append(result.Warnings, "Compliance module unavailable")
+		}()
 	}
 
+	// Goroutine 2: Cloud evaluations for compliance
 	if c.totalcloud != nil {
-		connectors, err := c.totalcloud.ListConnectors(ctx, "aws", 10)
-		if err == nil && len(connectors) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			connectors, err := c.totalcloud.ListConnectors(ctx, "aws", 10)
+			if err != nil || len(connectors) == 0 {
+				return
+			}
 			accountID := connectors[0].AwsAccountID
-			if accountID != "" {
-				evals, err := c.totalcloud.ListEvaluations(ctx, accountID, "aws", 500)
+			if accountID == "" {
+				return
+			}
+
+			// Fetch evaluations and controls concurrently
+			var evals []totalcloud.Evaluation
+			var controls []totalcloud.Control
+			var innerWg sync.WaitGroup
+			innerWg.Add(2)
+			go func() {
+				defer innerWg.Done()
+				e, err := c.totalcloud.ListEvaluations(ctx, accountID, "aws", 500)
 				if err == nil {
-					stats := totalcloud.GetEvaluationStats(evals, 20)
-					result.Summary.FailingControls = stats.FailedControls
-					result.Summary.PassingControls = stats.PassedControls
+					evals = e
+				}
+			}()
+			go func() {
+				defer innerWg.Done()
+				ctrl, err := c.totalcloud.ListControls(ctx, "aws", 500)
+				if err == nil {
+					controls = ctrl
+				}
+			}()
+			innerWg.Wait()
 
-					if stats.FailedControls+stats.PassedControls > 0 {
-						result.Summary.PassRate = float64(stats.PassedControls) / float64(stats.FailedControls+stats.PassedControls) * 100
-					}
+			if len(evals) == 0 {
+				return
+			}
 
-					controlFails := make(map[string]int)
-					for _, e := range evals {
-						if e.Status == "FAIL" || e.Status == "FAILED" {
-							controlFails[e.ControlID]++
-						}
-					}
-
-					type ctrlSort struct {
-						id    string
-						count int
-					}
-					var sorted []ctrlSort
-					for id, count := range controlFails {
-						sorted = append(sorted, ctrlSort{id, count})
-					}
-					for i := 0; i < len(sorted)-1; i++ {
-						for j := i + 1; j < len(sorted); j++ {
-							if sorted[j].count > sorted[i].count {
-								sorted[i], sorted[j] = sorted[j], sorted[i]
-							}
-						}
-					}
-
-					controls, _ := c.totalcloud.ListControls(ctx, "aws", 500)
-					controlMap := make(map[string]totalcloud.Control)
-					for _, ctrl := range controls {
-						controlMap[ctrl.ControlID] = ctrl
-					}
-
-					for i := 0; i < len(sorted) && i < limit; i++ {
-						fc := FailingControl{
-							FailCount: sorted[i].count,
-						}
-						if ctrl, ok := controlMap[sorted[i].id]; ok {
-							fc.Name = ctrl.Name
-							fc.Criticality = ctrl.Criticality
-							fc.Category = ctrl.Category
-						} else {
-							fc.Name = sorted[i].id
-						}
-						result.TopFailingCtrls = append(result.TopFailingCtrls, fc)
-					}
+			stats := totalcloud.GetEvaluationStats(evals, 20)
+			controlFails := make(map[string]int)
+			for _, e := range evals {
+				if e.Status == "FAIL" || e.Status == "FAILED" {
+					controlFails[e.ControlID]++
 				}
 			}
-		}
+
+			controlMap := make(map[string]totalcloud.Control)
+			for _, ctrl := range controls {
+				controlMap[ctrl.ControlID] = ctrl
+			}
+
+			type ctrlSort struct {
+				id    string
+				count int
+			}
+			var sorted []ctrlSort
+			for id, count := range controlFails {
+				sorted = append(sorted, ctrlSort{id, count})
+			}
+			sort.Slice(sorted, func(i, j int) bool {
+				return sorted[i].count > sorted[j].count
+			})
+
+			mu.Lock()
+			result.Summary.FailingControls = stats.FailedControls
+			result.Summary.PassingControls = stats.PassedControls
+			if stats.FailedControls+stats.PassedControls > 0 {
+				result.Summary.PassRate = float64(stats.PassedControls) / float64(stats.FailedControls+stats.PassedControls) * 100
+			}
+			for i := 0; i < len(sorted) && i < limit; i++ {
+				fc := FailingControl{FailCount: sorted[i].count}
+				if ctrl, ok := controlMap[sorted[i].id]; ok {
+					fc.Name = ctrl.Name
+					fc.Criticality = ctrl.Criticality
+					fc.Category = ctrl.Category
+				} else {
+					fc.Name = sorted[i].id
+				}
+				result.TopFailingCtrls = append(result.TopFailingCtrls, fc)
+			}
+			mu.Unlock()
+		}()
 	}
 
+	wg.Wait()
 	return result, nil
 }
 
+// --- GetCloudRiskSummary ---
+// Goroutines: All provider connectors, CDR, and container risk run concurrently.
+
 type CloudRiskSummary struct {
-	Summary           CloudRiskOverview      `json:"summary"`
-	AccountsOverview  []CloudAccountInfo     `json:"accountsOverview"`
-	FailedControls    []CloudFailedControl   `json:"topFailedControls"`
-	Misconfigs        []CloudMisconfig       `json:"misconfigurationsByType,omitempty"`
-	ContainerRisks    []CloudContainerRisk   `json:"containerRisks,omitempty"`
-	CDRFindings       []CloudCDRFinding      `json:"recentThreats,omitempty"`
-	TopRiskyResources []CloudRiskyResource   `json:"topRiskyResources,omitempty"`
-	Warnings          []string               `json:"warnings,omitempty"`
+	Summary           CloudRiskOverview    `json:"summary"`
+	AccountsOverview  []CloudAccountInfo   `json:"accountsOverview"`
+	FailedControls    []CloudFailedControl `json:"topFailedControls"`
+	Misconfigs        []CloudMisconfig     `json:"misconfigurationsByType,omitempty"`
+	ContainerRisks    []CloudContainerRisk `json:"containerRisks,omitempty"`
+	CDRFindings       []CloudCDRFinding    `json:"recentThreats,omitempty"`
+	TopRiskyResources []CloudRiskyResource `json:"topRiskyResources,omitempty"`
+	Warnings          []string             `json:"warnings,omitempty"`
 }
 
 type CloudRiskOverview struct {
@@ -1926,144 +2094,273 @@ func (c *Client) GetCloudRiskSummary(ctx context.Context, limit int) (*CloudRisk
 		TopRiskyResources: []CloudRiskyResource{},
 	}
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
 	if c.totalcloud != nil {
-		for _, provider := range []string{"aws", "azure", "gcp"} {
-			connectors, err := c.totalcloud.ListConnectors(ctx, provider, 50)
+		// Goroutine: Fetch all provider connectors + CDR concurrently
+		type providerResult struct {
+			provider   string
+			connectors []totalcloud.Connector
+		}
+		providers := []string{"aws", "azure", "gcp"}
+		provResults := make([]providerResult, len(providers))
+
+		for idx, p := range providers {
+			wg.Add(1)
+			go func(i int, prov string) {
+				defer wg.Done()
+				conns, err := c.totalcloud.ListConnectors(ctx, prov, 50)
+				if err == nil {
+					mu.Lock()
+					provResults[i] = providerResult{provider: prov, connectors: conns}
+					mu.Unlock()
+				}
+			}(idx, p)
+		}
+
+		// CDR findings concurrent
+		var cdrFindings []totalcloud.CDRFinding
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			findings, err := c.totalcloud.ListCDRFindings(ctx, "", "", 7, limit)
 			if err == nil {
-				for _, conn := range connectors {
-					accountID := ""
-					switch provider {
-					case "aws":
-						accountID = conn.AwsAccountID
-					case "azure":
-						accountID = conn.AzureSubID
-					case "gcp":
-						accountID = conn.GcpProjectID
-					}
-					result.AccountsOverview = append(result.AccountsOverview, CloudAccountInfo{
-						AccountID:   accountID,
-						Provider:    strings.ToUpper(provider),
-						Name:        conn.Name,
-						State:       conn.State,
-						TotalAssets: conn.TotalAssets,
-					})
-					result.Summary.TotalAccounts++
-					result.Summary.TotalResources += conn.TotalAssets
+				mu.Lock()
+				cdrFindings = findings
+				mu.Unlock()
+			}
+		}()
+
+		// Container risk concurrent
+		if c.container != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				filter := container.VulnContainerFilter{Severity: 5}
+				vc, err := c.container.ListVulnerableContainers(ctx, filter, 100)
+				if err == nil {
+					mu.Lock()
+					result.Summary.ContainersAtRisk = len(vc)
+					mu.Unlock()
+				}
+			}()
+		}
+
+		wg.Wait()
+
+		// Process connectors
+		var firstAccountID, firstProvider string
+		for _, pr := range provResults {
+			for _, conn := range pr.connectors {
+				accountID := ""
+				switch pr.provider {
+				case "aws":
+					accountID = conn.AwsAccountID
+				case "azure":
+					accountID = conn.AzureSubID
+				case "gcp":
+					accountID = conn.GcpProjectID
+				}
+				result.AccountsOverview = append(result.AccountsOverview, CloudAccountInfo{
+					AccountID: accountID, Provider: strings.ToUpper(pr.provider),
+					Name: conn.Name, State: conn.State, TotalAssets: conn.TotalAssets,
+				})
+				result.Summary.TotalAccounts++
+				result.Summary.TotalResources += conn.TotalAssets
+				if firstAccountID == "" && accountID != "" {
+					firstAccountID = accountID
+					firstProvider = pr.provider
 				}
 			}
 		}
 
-		if len(result.AccountsOverview) > 0 {
-			acc := result.AccountsOverview[0]
-			provider := strings.ToLower(acc.Provider)
-			evals, err := c.totalcloud.ListEvaluations(ctx, acc.AccountID, provider, 500)
-			if err == nil {
-				controlFails := make(map[string]int)
-				resourceFails := make(map[string]int)
-				resourceTypes := make(map[string]string)
+		// Fetch evaluations + controls for first account (sequential, needs accountID)
+		if firstAccountID != "" {
+			var evals []totalcloud.Evaluation
+			var controls []totalcloud.Control
+			var evalWg sync.WaitGroup
+			evalWg.Add(2)
+			go func() {
+				defer evalWg.Done()
+				e, err := c.totalcloud.ListEvaluations(ctx, firstAccountID, firstProvider, 500)
+				if err == nil {
+					evals = e
+				}
+			}()
+			go func() {
+				defer evalWg.Done()
+				ctrl, _ := c.totalcloud.ListControls(ctx, firstProvider, 500)
+				controls = ctrl
+			}()
+			evalWg.Wait()
 
-				for _, e := range evals {
-					if e.Status == "FAIL" || e.Status == "FAILED" {
-						controlFails[e.ControlID]++
-						resourceFails[e.ResourceID]++
-						result.Summary.FailedControlCount++
-					}
-				}
-
-				controls, _ := c.totalcloud.ListControls(ctx, provider, 500)
-				controlMap := make(map[string]totalcloud.Control)
-				for _, ctrl := range controls {
-					controlMap[ctrl.ControlID] = ctrl
-				}
-
-				type ctrlSort struct {
-					id    string
-					count int
-				}
-				var sortedCtrls []ctrlSort
-				for id, count := range controlFails {
-					sortedCtrls = append(sortedCtrls, ctrlSort{id, count})
-				}
-				for i := 0; i < len(sortedCtrls)-1; i++ {
-					for j := i + 1; j < len(sortedCtrls); j++ {
-						if sortedCtrls[j].count > sortedCtrls[i].count {
-							sortedCtrls[i], sortedCtrls[j] = sortedCtrls[j], sortedCtrls[i]
-						}
-					}
-				}
-				for i := 0; i < len(sortedCtrls) && i < limit; i++ {
-					fc := CloudFailedControl{
-						ControlID: sortedCtrls[i].id,
-						FailCount: sortedCtrls[i].count,
-					}
-					if ctrl, ok := controlMap[sortedCtrls[i].id]; ok {
-						fc.Name = ctrl.Name
-						fc.Criticality = ctrl.Criticality
-						fc.Service = ctrl.Service
-					}
-					result.FailedControls = append(result.FailedControls, fc)
-				}
-
-				type resSort struct {
-					id    string
-					count int
-				}
-				var sortedRes []resSort
-				for id, count := range resourceFails {
-					sortedRes = append(sortedRes, resSort{id, count})
-				}
-				for i := 0; i < len(sortedRes)-1; i++ {
-					for j := i + 1; j < len(sortedRes); j++ {
-						if sortedRes[j].count > sortedRes[i].count {
-							sortedRes[i], sortedRes[j] = sortedRes[j], sortedRes[i]
-						}
-					}
-				}
-				for i := 0; i < len(sortedRes) && i < limit; i++ {
-					rr := CloudRiskyResource{
-						ResourceID:  sortedRes[i].id,
-						Provider:    strings.ToUpper(provider),
-						FailedCtrls: sortedRes[i].count,
-						Type:        resourceTypes[sortedRes[i].id],
-					}
-					result.TopRiskyResources = append(result.TopRiskyResources, rr)
+			controlFails := make(map[string]int)
+			resourceFails := make(map[string]int)
+			for _, e := range evals {
+				if e.Status == "FAIL" || e.Status == "FAILED" {
+					controlFails[e.ControlID]++
+					resourceFails[e.ResourceID]++
+					result.Summary.FailedControlCount++
 				}
 			}
-		}
 
-		findings, err := c.totalcloud.ListCDRFindings(ctx, "", "", 7, limit)
-		if err == nil {
-			for _, f := range findings {
-				sev := ""
-				if s, ok := f.Severity.(string); ok {
-					sev = s
-				} else if s, ok := f.Severity.(float64); ok {
-					sev = fmt.Sprintf("%.0f", s)
+			controlMap := make(map[string]totalcloud.Control)
+			for _, ctrl := range controls {
+				controlMap[ctrl.ControlID] = ctrl
+			}
+
+			type sortItem struct {
+				id    string
+				count int
+			}
+			var sortedCtrls []sortItem
+			for id, count := range controlFails {
+				sortedCtrls = append(sortedCtrls, sortItem{id, count})
+			}
+			sort.Slice(sortedCtrls, func(i, j int) bool {
+				return sortedCtrls[i].count > sortedCtrls[j].count
+			})
+			for i := 0; i < len(sortedCtrls) && i < limit; i++ {
+				fc := CloudFailedControl{
+					ControlID: sortedCtrls[i].id, FailCount: sortedCtrls[i].count,
 				}
-				if sev == "CRITICAL" || sev == "5" {
-					result.Summary.CriticalFindings++
+				if ctrl, ok := controlMap[sortedCtrls[i].id]; ok {
+					fc.Name = ctrl.Name
+					fc.Criticality = ctrl.Criticality
+					fc.Service = ctrl.Service
 				}
-				result.CDRFindings = append(result.CDRFindings, CloudCDRFinding{
-					Severity:   sev,
-					Category:   f.Category,
-					Message:    f.EventMessage,
-					ResourceID: f.ResourceID,
-					Timestamp:  f.Timestamp,
-					Provider:   f.CloudType,
+				result.FailedControls = append(result.FailedControls, fc)
+			}
+
+			var sortedRes []sortItem
+			for id, count := range resourceFails {
+				sortedRes = append(sortedRes, sortItem{id, count})
+			}
+			sort.Slice(sortedRes, func(i, j int) bool {
+				return sortedRes[i].count > sortedRes[j].count
+			})
+			for i := 0; i < len(sortedRes) && i < limit; i++ {
+				result.TopRiskyResources = append(result.TopRiskyResources, CloudRiskyResource{
+					ResourceID: sortedRes[i].id, Provider: strings.ToUpper(firstProvider),
+					FailedCtrls: sortedRes[i].count,
 				})
 			}
+		}
+
+		// Process CDR findings
+		for _, f := range cdrFindings {
+			sev := ""
+			if s, ok := f.Severity.(string); ok {
+				sev = s
+			} else if s, ok := f.Severity.(float64); ok {
+				sev = fmt.Sprintf("%.0f", s)
+			}
+			if sev == "CRITICAL" || sev == "5" {
+				result.Summary.CriticalFindings++
+			}
+			result.CDRFindings = append(result.CDRFindings, CloudCDRFinding{
+				Severity: sev, Category: f.Category, Message: f.EventMessage,
+				ResourceID: f.ResourceID, Timestamp: f.Timestamp, Provider: f.CloudType,
+			})
 		}
 	} else {
 		result.Warnings = append(result.Warnings, "TotalCloud unavailable")
 	}
 
-	if c.container != nil {
-		filter := container.VulnContainerFilter{Severity: 5}
-		vulnContainers, err := c.container.ListVulnerableContainers(ctx, filter, 100)
-		if err == nil {
-			result.Summary.ContainersAtRisk = len(vulnContainers)
+	return result, nil
+}
+
+// --- Helper functions ---
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+func interfaceToString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch id := v.(type) {
+	case string:
+		return id
+	case float64:
+		return fmt.Sprintf("%.0f", id)
+	case int:
+		return fmt.Sprintf("%d", id)
+	default:
+		return fmt.Sprintf("%v", id)
+	}
+}
+
+func extractCriticality(v interface{}) int {
+	if v == nil {
+		return 2
+	}
+	switch c := v.(type) {
+	case float64:
+		return int(c)
+	case int:
+		return c
+	case map[string]interface{}:
+		if score, ok := c["score"].(float64); ok {
+			return int(score)
 		}
 	}
+	return 2
+}
 
-	return result, nil
+// countDetectionQIDs counts total detections per QID across all hosts.
+func countDetectionQIDs(detections []vmdr.HostDetection) map[int]int {
+	counts := make(map[int]int)
+	for _, host := range detections {
+		for _, det := range host.Detections {
+			counts[det.QID]++
+		}
+	}
+	return counts
+}
+
+func sumCounts(m map[int]int) int {
+	total := 0
+	for _, c := range m {
+		total += c
+	}
+	return total
+}
+
+// buildInfraVulns creates sorted InfraVulnPriority list from QID counts + KB data.
+func buildInfraVulns(qidCounts map[int]int, kbData map[int]*knowledgebase.QIDInfo, severity int, limit int) []InfraVulnPriority {
+	type qidSort struct {
+		qid   int
+		count int
+	}
+	var sortable []qidSort
+	for qid, count := range qidCounts {
+		sortable = append(sortable, qidSort{qid, count})
+	}
+	sort.Slice(sortable, func(i, j int) bool {
+		return sortable[i].count > sortable[j].count
+	})
+
+	var result []InfraVulnPriority
+	for i := 0; i < len(sortable) && i < limit; i++ {
+		vuln := InfraVulnPriority{
+			QID: sortable[i].qid, Severity: severity,
+			AffectedHosts: sortable[i].count,
+		}
+		if kbData != nil {
+			if kb, ok := kbData[sortable[i].qid]; ok {
+				vuln.Title = kb.Title
+				vuln.CVEs = kb.CVEs
+				vuln.Fix = truncate(kb.Solution, 150)
+				vuln.PatchAvailable = kb.PatchAvailable
+			}
+		}
+		result = append(result, vuln)
+	}
+	return result
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/url"
+	"sort"
 
 	"github.com/nelssec/qualys-mcp/internal/common"
 )
@@ -165,7 +166,7 @@ func (c *Client) GetHostDetections(ctx context.Context, hostID string, severityF
 	params.Set("ids", hostID)
 	params.Set("show_igs", "1")
 	params.Set("show_qds", "1")
-	params.Set("show_qds_factors", "1")
+	params.Set("filter_superseded_qids", "1")
 	if severityFilter > 0 {
 		params.Set("severities", fmt.Sprintf("%d", severityFilter))
 	}
@@ -200,7 +201,7 @@ func (c *Client) SearchDetectionsWithStatus(ctx context.Context, qids string, se
 	params := url.Values{}
 	params.Set("action", "list")
 	params.Set("show_qds", "1")
-	params.Set("show_qds_factors", "1")
+	params.Set("filter_superseded_qids", "1")
 	if qids != "" {
 		params.Set("qids", qids)
 	}
@@ -383,28 +384,15 @@ func (c *Client) GetDetectionStats(ctx context.Context, qids string, severity in
 		stats.AvgQDS = totalQDS / qdsCount
 	}
 
-	type qidSort struct {
-		qid   int
-		count int
-		sev   int
-	}
-	var sortable []qidSort
+	var sortable []QIDCount
 	for _, qc := range qidCounts {
-		sortable = append(sortable, qidSort{qc.QID, qc.Count, qc.Severity})
+		sortable = append(sortable, QIDCount{qc.QID, qc.Count, qc.Severity})
 	}
-	for i := 0; i < len(sortable)-1; i++ {
-		for j := i + 1; j < len(sortable); j++ {
-			if sortable[j].count > sortable[i].count {
-				sortable[i], sortable[j] = sortable[j], sortable[i]
-			}
-		}
-	}
+	sort.Slice(sortable, func(i, j int) bool {
+		return sortable[i].Count > sortable[j].Count
+	})
 	for i := 0; i < len(sortable) && i < 10; i++ {
-		stats.TopQIDs = append(stats.TopQIDs, QIDCount{
-			QID:      sortable[i].qid,
-			Count:    sortable[i].count,
-			Severity: sortable[i].sev,
-		})
+		stats.TopQIDs = append(stats.TopQIDs, sortable[i])
 	}
 
 	return stats, nil
@@ -482,31 +470,18 @@ func (c *Client) GetDetectionSummary(ctx context.Context, qids string, severity 
 		summary.Stats.AvgQDS = totalQDS / qdsCount
 	}
 
-	type hostSort struct {
-		id    string
-		ip    string
-		count int
-		sev   int
-	}
-	var sortableHosts []hostSort
+	var sortableHosts []*HostSummary
 	for _, h := range hostMap {
-		sortableHosts = append(sortableHosts, hostSort{h.HostID, h.IP, h.DetectionCount, h.MaxSeverity})
+		sortableHosts = append(sortableHosts, h)
 	}
-	for i := 0; i < len(sortableHosts)-1; i++ {
-		for j := i + 1; j < len(sortableHosts); j++ {
-			if sortableHosts[j].sev > sortableHosts[i].sev ||
-				(sortableHosts[j].sev == sortableHosts[i].sev && sortableHosts[j].count > sortableHosts[i].count) {
-				sortableHosts[i], sortableHosts[j] = sortableHosts[j], sortableHosts[i]
-			}
+	sort.Slice(sortableHosts, func(i, j int) bool {
+		if sortableHosts[i].MaxSeverity != sortableHosts[j].MaxSeverity {
+			return sortableHosts[i].MaxSeverity > sortableHosts[j].MaxSeverity
 		}
-	}
+		return sortableHosts[i].DetectionCount > sortableHosts[j].DetectionCount
+	})
 	for i := 0; i < len(sortableHosts) && i < 10; i++ {
-		summary.TopRiskHosts = append(summary.TopRiskHosts, HostSummary{
-			HostID:         sortableHosts[i].id,
-			IP:             sortableHosts[i].ip,
-			DetectionCount: sortableHosts[i].count,
-			MaxSeverity:    sortableHosts[i].sev,
-		})
+		summary.TopRiskHosts = append(summary.TopRiskHosts, *sortableHosts[i])
 	}
 
 	type qidSort struct {
@@ -519,26 +494,20 @@ func (c *Client) GetDetectionSummary(ctx context.Context, qids string, severity 
 	for qid, qc := range qidCounts {
 		sortableQIDs = append(sortableQIDs, qidSort{qid, qc.Count, qc.Severity, qidHostCounts[qid]})
 	}
-	for i := 0; i < len(sortableQIDs)-1; i++ {
-		for j := i + 1; j < len(sortableQIDs); j++ {
-			if sortableQIDs[j].sev > sortableQIDs[i].sev ||
-				(sortableQIDs[j].sev == sortableQIDs[i].sev && sortableQIDs[j].hostCount > sortableQIDs[i].hostCount) {
-				sortableQIDs[i], sortableQIDs[j] = sortableQIDs[j], sortableQIDs[i]
-			}
+	sort.Slice(sortableQIDs, func(i, j int) bool {
+		if sortableQIDs[i].sev != sortableQIDs[j].sev {
+			return sortableQIDs[i].sev > sortableQIDs[j].sev
 		}
-	}
+		return sortableQIDs[i].hostCount > sortableQIDs[j].hostCount
+	})
 	for i := 0; i < len(sortableQIDs) && i < 10; i++ {
 		summary.Stats.TopQIDs = append(summary.Stats.TopQIDs, QIDCount{
-			QID:      sortableQIDs[i].qid,
-			Count:    sortableQIDs[i].count,
-			Severity: sortableQIDs[i].sev,
+			QID: sortableQIDs[i].qid, Count: sortableQIDs[i].count, Severity: sortableQIDs[i].sev,
 		})
 	}
 	for i := 0; i < len(sortableQIDs) && i < 20; i++ {
 		summary.TopFindings = append(summary.TopFindings, DetectionBrief{
-			QID:       sortableQIDs[i].qid,
-			Severity:  sortableQIDs[i].sev,
-			HostCount: sortableQIDs[i].hostCount,
+			QID: sortableQIDs[i].qid, Severity: sortableQIDs[i].sev, HostCount: sortableQIDs[i].hostCount,
 		})
 	}
 

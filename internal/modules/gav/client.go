@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 
@@ -99,7 +100,7 @@ type TagListResponse struct {
 }
 
 func (c *Client) ListAssets(ctx context.Context, filter string, limit int) ([]Asset, error) {
-	endpoint := fmt.Sprintf("%s/am/v1/assets/host/list", c.gatewayURL)
+	endpoint := fmt.Sprintf("%s/rest/2.0/search/am/asset", c.gatewayURL)
 
 	var result []Asset
 	var lastSeenID interface{}
@@ -115,14 +116,17 @@ func (c *Client) ListAssets(ctx context.Context, filter string, limit int) ([]As
 	for {
 		params := url.Values{}
 		params.Set("pageSize", fmt.Sprintf("%d", pageSize))
-		if filter != "" {
-			params.Set("filter", filter)
-		}
 		if lastSeenID != nil {
 			params.Set("lastSeenAssetId", fmt.Sprintf("%v", lastSeenID))
 		}
 
-		data, err := c.http.Post(ctx, endpoint+"?"+params.Encode(), nil, "")
+		var bodyReader io.Reader
+		if filter != "" {
+			filterJSON, _ := json.Marshal(map[string]string{"filter": filter})
+			bodyReader = strings.NewReader(string(filterJSON))
+		}
+
+		data, err := c.http.Post(ctx, endpoint+"?"+params.Encode(), bodyReader, "application/json")
 		if err != nil {
 			return nil, err
 		}
@@ -158,11 +162,30 @@ func (c *Client) ListAssets(ctx context.Context, filter string, limit int) ([]As
 }
 
 func (c *Client) CountAssets(ctx context.Context, filter string) (int, error) {
-	assets, err := c.ListAssets(ctx, filter, 0)
+	endpoint := fmt.Sprintf("%s/rest/2.0/count/am/asset", c.gatewayURL)
+
+	var bodyReader io.Reader
+	contentType := "application/json"
+	if filter != "" {
+		filterJSON, _ := json.Marshal(map[string]string{"filter": filter})
+		bodyReader = strings.NewReader(string(filterJSON))
+	} else {
+		bodyReader = strings.NewReader("{}")
+	}
+
+	data, err := c.http.Post(ctx, endpoint, bodyReader, contentType)
 	if err != nil {
 		return 0, err
 	}
-	return len(assets), nil
+
+	var resp struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return 0, fmt.Errorf("parse count response: %w", err)
+	}
+
+	return resp.Count, nil
 }
 
 func (c *Client) SearchAssets(ctx context.Context, query string, limit int) ([]Asset, error) {
@@ -170,13 +193,10 @@ func (c *Client) SearchAssets(ctx context.Context, query string, limit int) ([]A
 }
 
 func (c *Client) GetAssetDetails(ctx context.Context, assetID string) (*AssetDetails, error) {
-	endpoint := fmt.Sprintf("%s/am/v1/assets/host/list", c.gatewayURL)
+	endpoint := fmt.Sprintf("%s/rest/2.0/search/am/asset?pageSize=1", c.gatewayURL)
 
-	params := url.Values{}
-	params.Set("pageSize", "1")
-	params.Set("filter", fmt.Sprintf("assetId:%s", assetID))
-
-	data, err := c.http.Post(ctx, endpoint+"?"+params.Encode(), nil, "")
+	filterJSON, _ := json.Marshal(map[string]string{"filter": fmt.Sprintf("assetId:%s", assetID)})
+	data, err := c.http.Post(ctx, endpoint, strings.NewReader(string(filterJSON)), "application/json")
 	if err != nil {
 		return nil, err
 	}

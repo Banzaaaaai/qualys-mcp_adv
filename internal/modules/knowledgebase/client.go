@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nelssec/qualys-mcp/internal/common"
@@ -14,6 +15,7 @@ import (
 type Client struct {
 	http    *common.HTTPClient
 	baseURL string
+	cache   sync.Map // map[int]*QIDInfo
 }
 
 func NewClient(http *common.HTTPClient, baseURL string) *Client {
@@ -45,7 +47,7 @@ type CVEMapping struct {
 }
 
 type KBXMLResponse struct {
-	XMLName  xml.Name  `xml:"KNOWLEDGE_BASE_VULN_LIST_OUTPUT"`
+	XMLName  xml.Name   `xml:"KNOWLEDGE_BASE_VULN_LIST_OUTPUT"`
 	Response KBResponse `xml:"RESPONSE"`
 }
 
@@ -55,6 +57,11 @@ type KBResponse struct {
 }
 
 func (c *Client) GetQID(ctx context.Context, qid int) (*QIDInfo, error) {
+	// Check cache first
+	if cached, ok := c.cache.Load(qid); ok {
+		return cached.(*QIDInfo), nil
+	}
+
 	endpoint := fmt.Sprintf("%s/api/2.0/fo/knowledge_base/vuln/", c.baseURL)
 
 	params := url.Values{}
@@ -76,7 +83,67 @@ func (c *Client) GetQID(ctx context.Context, qid int) (*QIDInfo, error) {
 		return nil, fmt.Errorf("QID %d not found", qid)
 	}
 
-	return &resp.Response.VulnList[0], nil
+	info := &resp.Response.VulnList[0]
+	c.cache.Store(qid, info)
+	return info, nil
+}
+
+// GetQIDBatch fetches multiple QIDs in a single API call (up to 50 per request).
+// Returns a map of QID -> QIDInfo. Missing QIDs are omitted from the map.
+func (c *Client) GetQIDBatch(ctx context.Context, qids []int) (map[int]*QIDInfo, error) {
+	result := make(map[int]*QIDInfo, len(qids))
+
+	// Collect uncached QIDs
+	var uncached []int
+	for _, qid := range qids {
+		if cached, ok := c.cache.Load(qid); ok {
+			result[qid] = cached.(*QIDInfo)
+		} else {
+			uncached = append(uncached, qid)
+		}
+	}
+
+	if len(uncached) == 0 {
+		return result, nil
+	}
+
+	// Fetch in batches of 50 (Qualys API limit)
+	for i := 0; i < len(uncached); i += 50 {
+		end := i + 50
+		if end > len(uncached) {
+			end = len(uncached)
+		}
+		batch := uncached[i:end]
+
+		ids := make([]string, len(batch))
+		for j, qid := range batch {
+			ids[j] = fmt.Sprintf("%d", qid)
+		}
+
+		endpoint := fmt.Sprintf("%s/api/2.0/fo/knowledge_base/vuln/", c.baseURL)
+		params := url.Values{}
+		params.Set("action", "list")
+		params.Set("ids", strings.Join(ids, ","))
+		params.Set("details", "All")
+
+		data, err := c.http.Get(ctx, endpoint+"?"+params.Encode())
+		if err != nil {
+			continue // Don't fail entire batch if one request fails
+		}
+
+		var resp KBXMLResponse
+		if err := xml.Unmarshal(data, &resp); err != nil {
+			continue
+		}
+
+		for idx := range resp.Response.VulnList {
+			info := &resp.Response.VulnList[idx]
+			c.cache.Store(info.QID, info)
+			result[info.QID] = info
+		}
+	}
+
+	return result, nil
 }
 
 func (c *Client) SearchVulns(ctx context.Context, keyword string, limit int) ([]QIDInfo, error) {
@@ -135,6 +202,9 @@ func (c *Client) GetCVEMapping(ctx context.Context, cve string) (*CVEMapping, er
 
 	for i, info := range resp.Response.VulnList {
 		mapping.QIDs[i] = info.QID
+		// Cache each QID we find
+		infoCopy := info
+		c.cache.Store(info.QID, &infoCopy)
 	}
 
 	return mapping, nil
