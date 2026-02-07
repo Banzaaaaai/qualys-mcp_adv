@@ -144,12 +144,14 @@ def get_detections(severity=5, limit=200, use_cache=True, days=30, qds_min=0):
     return dets
 
 
-def get_host_detections(host_id, severity=4):
-    """Get detections for a specific host by ID (targeted, fast)."""
+def get_host_detections(host_id, severity=4, days=30):
+    """Get detections for a specific host by ID."""
+    after_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
     data = api_get(
         f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list"
-        f"&ids={host_id}&severities={severity}&show_qds=1&filter_superseded_qids=1",
-        timeout=60
+        f"&ids={host_id}&severities={severity}&show_qds=1&filter_superseded_qids=1"
+        f"&vm_processed_after={after_date}",
+        timeout=120
     )
     if not data:
         return []
@@ -252,70 +254,65 @@ def get_cve_qids(cve):
         return []
 
 
-def get_asset_by_id(asset_id):
-    """Get a single asset by ID using CSAM v2 POST endpoint (fast, targeted)."""
+def csam_count(filters=None):
+    """Count assets with optional structured filters. Fast (~0.2s).
+    filters: list of {"field": "...", "operator": "...", "value": "..."} dicts
+    """
     token = get_bearer_token()
-    url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize=1"
-    body = json.dumps({"filter": f"assetId:{asset_id}"})
+    url = f"{GATEWAY_URL}/rest/2.0/count/am/asset"
+    body = json.dumps({"filters": filters}) if filters else "{}"
     req = Request(url, data=body.encode(), method='POST')
     req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
     req.add_header('Content-Type', 'application/json')
+    req.add_header('Accept', 'application/json')
     req.add_header('X-Requested-With', 'qualys-mcp')
     try:
         with urlopen(req, timeout=30) as resp:
-            assets = json.loads(resp.read()).get('assetListData', {}).get('asset', [])
-            return assets[0] if assets else None
-    except Exception as e:
-        _log(f"get_asset_by_id error: {e}")
-        return None
+            return json.loads(resp.read()).get('count', 0)
+    except Exception:
+        return 0
 
 
-def get_assets(limit=100, qql=None):
-    """Search assets using CSAM v2 POST endpoint."""
+def csam_search(filters=None, limit=100, fields=None):
+    """Search assets with optional structured filters. Returns list of assets.
+    filters: list of {"field": "...", "operator": "...", "value": "..."} dicts
+    fields: comma-separated includeFields (e.g. "operatingSystem,hardware")
+    """
     token = get_bearer_token()
     url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize={limit}"
-    body = json.dumps({"filter": qql}) if qql else "{}"
+    if fields:
+        url += f"&includeFields={fields}"
+    body = json.dumps({"filters": filters}) if filters else "{}"
     req = Request(url, data=body.encode(), method='POST')
     req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
     req.add_header('Content-Type', 'application/json')
+    req.add_header('Accept', 'application/json')
     req.add_header('X-Requested-With', 'qualys-mcp')
     try:
         with urlopen(req, timeout=30) as resp:
             return json.loads(resp.read()).get('assetListData', {}).get('asset', [])
     except Exception as e:
-        _log(f"get_assets error: {e}")
+        _log(f"csam_search error: {e}")
         return []
 
 
+def get_asset_by_id(asset_id):
+    """Get a single asset by ID using CSAM v2 (fast, targeted)."""
+    assets = csam_search(
+        filters=[{"field": "asset.id", "operator": "EQUALS", "value": str(asset_id)}],
+        limit=1
+    )
+    return assets[0] if assets else None
+
+
+def get_assets(limit=100, filters=None):
+    """Search assets using CSAM v2 structured filters."""
+    return csam_search(filters=filters, limit=limit)
+
+
 def get_asset_count():
-    """Fast asset count using dedicated count endpoint."""
-    token = get_bearer_token()
-    url = f"{GATEWAY_URL}/rest/2.0/count/am/asset"
-    req = Request(url, data=b'{}', method='POST')
-    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
-    req.add_header('Content-Type', 'application/json')
-    req.add_header('X-Requested-With', 'qualys-mcp')
-    try:
-        with urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read()).get('count', 0)
-    except Exception:
-        return 0
-
-
-def get_eol_count(qql_filter):
-    """Get count of assets matching QQL filter (fast, no pagination)"""
-    token = get_bearer_token()
-    url = f"{GATEWAY_URL}/rest/2.0/count/am/asset"
-    filter_body = json.dumps({"filter": qql_filter})
-    req = Request(url, data=filter_body.encode(), method='POST')
-    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
-    req.add_header('Content-Type', 'application/json')
-    req.add_header('X-Requested-With', 'qualys-mcp')
-    try:
-        with urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read()).get('count', 0)
-    except Exception:
-        return 0
+    """Fast total asset count."""
+    return csam_count()
 
 
 def is_eol_stage(stage):
@@ -324,22 +321,6 @@ def is_eol_stage(stage):
         return False
     s = stage.upper()
     return ('EOL' in s or 'EOS' in s) and s != 'NOT APPLICABLE'
-
-
-def get_eol_sample(qql_filter, limit=100):
-    """Get single page of assets (no pagination) and filter for EOL"""
-    token = get_bearer_token()
-    url = f"{GATEWAY_URL}/rest/2.0/search/am/asset?pageSize={limit}"
-    filter_body = json.dumps({"filter": qql_filter})
-    req = Request(url, data=filter_body.encode(), method='POST')
-    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
-    req.add_header('Content-Type', 'application/json')
-    req.add_header('X-Requested-With', 'qualys-mcp')
-    try:
-        with urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read()).get('assetListData', {}).get('asset', [])
-    except Exception:
-        return []
 
 
 def get_images(limit=100, severity=None):
@@ -475,9 +456,14 @@ def get_criticality(asset):
     return crit or 0
 
 
-def fetch_all_eol(qql_filter, limit=1000, max_pages=50):
-    """Fetch EOL assets with pagination until limit or max_pages reached"""
+def fetch_all_eol(eol_type, limit=1000, max_pages=50):
+    """Fetch EOL assets with pagination. eol_type is 'os' or 'hardware'."""
     token = get_bearer_token()
+    if eol_type == 'os':
+        filters = [{"field": "operatingSystem.lifecycle.stage", "operator": "CONTAINS", "value": "EOL"}]
+    else:
+        filters = [{"field": "hardware.lifecycle.stage", "operator": "CONTAINS", "value": "EOL"}]
+
     results = []
     seen = set()
     last_id = None
@@ -490,10 +476,11 @@ def fetch_all_eol(qql_filter, limit=1000, max_pages=50):
         if last_id:
             url += f"&lastSeenAssetId={last_id}"
 
-        filter_body = json.dumps({"filter": qql_filter})
-        req = Request(url, data=filter_body.encode(), method='POST')
+        body = json.dumps({"filters": filters})
+        req = Request(url, data=body.encode(), method='POST')
         req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
         req.add_header('Content-Type', 'application/json')
+        req.add_header('Accept', 'application/json')
         req.add_header('X-Requested-With', 'qualys-mcp')
 
         try:
@@ -509,7 +496,7 @@ def fetch_all_eol(qql_filter, limit=1000, max_pages=50):
                         continue
                     seen.add(aid)
 
-                    if 'operatingSystem' in qql_filter:
+                    if eol_type == 'os':
                         info = a.get('operatingSystem', {}) or {}
                         name_field = 'os'
                         name_val = info.get('osName', '') or 'Unknown'
@@ -529,7 +516,7 @@ def fetch_all_eol(qql_filter, limit=1000, max_pages=50):
                             name_field: name_val,
                             'stage': stage,
                             'criticality': get_criticality(a),
-                            'riskScore': a.get('assetRiskScore') or 0
+                            'riskScore': a.get('riskScore') or 0
                         })
 
                 if not data.get('hasMore'):
@@ -561,132 +548,151 @@ def _run_concurrent(**tasks):
 
 @mcp.tool()
 def get_weekly_priorities(limit: int = 10) -> dict:
-    """Get prioritized security actions for the week. Returns top critical vulns and container risks ranked by severity and impact."""
-    result = {'summary': {'totalCritical': 0, 'assetsAffected': 0, 'containersAtRisk': 0, 'patchable': 0},
-              'priorities': [], 'byEffort': {'patch': 0, 'config': 0, 'upgrade': 0}}
+    """Get prioritized security actions for the week. Returns top high-risk assets with TruRisk scores, risk distribution, and container risks. Fast (~5s). Use get_asset_risk(assetId) for per-asset vulnerability details."""
+    result = {'summary': {}, 'priorities': [], 'topRiskAssets': []}
 
-    # Run detections (QDS 70+ = high/critical risk) and container checks concurrently
+    # All fast CSAM v2 queries (~0.2-3s each, run in parallel)
     concurrent = _run_concurrent(
-        dets=lambda: get_detections(5, 200, qds_min=70),
+        total=lambda: csam_count(),
+        risk_900=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "900"}]),
+        risk_700=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "700"}]),
+        risk_500=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}]),
+        eol_count=lambda: csam_count([{"field": "operatingSystem.lifecycle.stage", "operator": "CONTAINS", "value": "EOL"}]),
+        high_risk=lambda: csam_search(
+            [{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}],
+            limit=limit * 2
+        ),
         vuln_imgs=lambda: get_images(50, 5),
         containers=lambda: get_containers(100),
     )
 
-    dets = concurrent.get('dets') or []
-    qids = {}
-    hosts = set()
-    for d in dets:
-        qid = d['qid']
-        if qid not in qids:
-            qids[qid] = {'count': 0, 'hosts': set(), 'sev': d['severity']}
-        qids[qid]['count'] += 1
-        qids[qid]['hosts'].add(d['host_id'])
-        hosts.add(d['host_id'])
+    total = concurrent.get('total') or 0
+    risk_900 = concurrent.get('risk_900') or 0
+    risk_700 = concurrent.get('risk_700') or 0
+    risk_500 = concurrent.get('risk_500') or 0
+    eol_count = concurrent.get('eol_count') or 0
 
-    top_qids = sorted(qids.items(), key=lambda x: (x[1]['sev'], len(x[1]['hosts'])), reverse=True)[:limit]
-    kb_data = get_kb_batch([q[0] for q in top_qids])
+    result['summary'] = {
+        'totalAssets': total,
+        'criticalRisk': risk_900,
+        'highRisk': risk_700,
+        'elevatedRisk': risk_500,
+        'eolSystems': eol_count,
+    }
 
-    for i, (qid, data) in enumerate(top_qids):
-        kb = kb_data.get(qid)
-        patch = kb.get('patch_available', False) if kb else False
-        result['byEffort']['patch' if patch else 'config'] += 1
-        if patch:
-            result['summary']['patchable'] += 1
-        result['priorities'].append({
-            'rank': i + 1, 'qid': qid,
-            'title': kb['title'] if kb else f"QID {qid}",
-            'cves': kb.get('cves', [])[:3] if kb else [],
-            'hosts': len(data['hosts']),
-            'severity': data['sev'],
-            'effort': 'patch' if patch else 'config',
-            'fix': (kb.get('solution', '') if kb else '')[:150]
+    # Top risk assets sorted by TruRisk
+    high_risk = concurrent.get('high_risk') or []
+    high_risk.sort(key=lambda a: int(a.get('riskScore') or 0), reverse=True)
+    for i, asset in enumerate(high_risk[:limit]):
+        result['topRiskAssets'].append({
+            'rank': i + 1,
+            'assetId': str(asset.get('assetId', '')),
+            'hostId': str(asset.get('hostId') or ''),
+            'hostname': asset.get('dnsHostName', '') or asset.get('dnsName', ''),
+            'ip': asset.get('address', ''),
+            'riskScore': int(asset.get('riskScore') or 0),
+            'os': (asset.get('operatingSystem') or {}).get('osName', ''),
+            'criticality': get_criticality(asset),
         })
 
+    # Build actionable priorities
+    rank = 1
+    if risk_900 > 0:
+        result['priorities'].append({
+            'rank': rank, 'severity': 5,
+            'title': f"Remediate {risk_900} critical-risk assets (TruRisk > 900)",
+            'action': 'Use get_asset_risk(assetId) for specific vulnerabilities per asset',
+        })
+        rank += 1
+
+    if risk_700 > 0:
+        result['priorities'].append({
+            'rank': rank, 'severity': 4,
+            'title': f"Address {risk_700} high-risk assets (TruRisk > 700)",
+            'action': 'Focus on highest TruRisk scores first',
+        })
+        rank += 1
+
+    if eol_count > 0:
+        result['priorities'].append({
+            'rank': rank, 'severity': 4,
+            'title': f"Plan upgrades for {eol_count} EOL/EOS systems",
+            'action': 'Use get_tech_debt() for full EOL inventory',
+        })
+        rank += 1
+
+    # Container risks
     vuln_imgs = concurrent.get('vuln_imgs') or []
     containers = concurrent.get('containers') or []
     vuln_img_ids = {img.get('imageId') for img in vuln_imgs}
     at_risk = [c for c in containers if c.get('imageId') in vuln_img_ids]
     if at_risk:
-        result['priorities'].append({'rank': len(result['priorities']) + 1, 'title': 'Vulnerable containers',
-                                     'containers': len(at_risk), 'effort': 'upgrade', 'severity': 5})
-        result['byEffort']['upgrade'] = len(at_risk)
+        result['priorities'].append({
+            'rank': rank, 'severity': 5,
+            'title': f"Update {len(at_risk)} vulnerable containers",
+            'action': 'Rebuild container images with patched base images',
+        })
         result['summary']['containersAtRisk'] = len(at_risk)
 
-    result['summary']['totalCritical'] = len(qids)
-    result['summary']['assetsAffected'] = len(hosts)
     return result
 
 
 @mcp.tool()
 def investigate_cve(cve: str) -> dict:
-    """Investigate if your environment is affected by a specific CVE. Returns QIDs, affected hosts, KB details, and remediation."""
-    result = {'cve': cve, 'qids': [], 'affectedHosts': [], 'severity': 0,
+    """Investigate if your environment is affected by a specific CVE. Returns QIDs, KB details, severity, and remediation. Fast (~5s)."""
+    result = {'cve': cve, 'qids': [], 'severity': 0,
               'title': '', 'patchAvailable': False, 'solution': '',
-              'summary': {'hostsAffected': 0, 'patchAvailable': False}}
+              'allKbDetails': [],
+              'summary': {'qidCount': 0, 'patchAvailable': False}}
 
-    # Step 1: CVE -> QIDs + KB data
+    # Step 1: CVE -> QIDs + KB data (KB API is fast, ~3s)
     qids = get_cve_qids(cve)
     result['qids'] = qids
+    result['summary']['qidCount'] = len(qids)
 
     if qids:
-        kb = KB_CACHE.get(qids[0]) or get_kb(qids[0])
-        if kb:
-            result['title'] = kb.get('title', '')
-            result['severity'] = kb.get('severity', 0)
-            result['patchAvailable'] = kb.get('patch_available', False)
-            result['solution'] = kb.get('solution', '')[:500]
-            result['diagnosis'] = kb.get('diagnosis', '')[:300]
-            result['cves'] = kb.get('cves', [])
-            result['summary']['patchAvailable'] = kb.get('patch_available', False)
+        # Get KB details for all related QIDs
+        kb_data = get_kb_batch(qids[:20])
+        max_sev = 0
+        for qid in qids:
+            kb = kb_data.get(qid)
+            if kb:
+                if kb.get('severity', 0) > max_sev:
+                    max_sev = kb['severity']
+                    result['title'] = kb.get('title', '')
+                    result['severity'] = kb['severity']
+                    result['patchAvailable'] = kb.get('patch_available', False)
+                    result['solution'] = kb.get('solution', '')[:500]
+                    result['diagnosis'] = kb.get('diagnosis', '')[:300]
+                    result['summary']['patchAvailable'] = kb.get('patch_available', False)
+                result['allKbDetails'].append({
+                    'qid': qid,
+                    'title': kb.get('title', ''),
+                    'severity': kb.get('severity', 0),
+                    'patchAvailable': kb.get('patch_available', False),
+                    'cves': kb.get('cves', [])[:5],
+                })
 
-    # Step 2: Search VMDR detections for affected hosts (filter by QIDs for speed)
-    if qids:
-        qid_str = ','.join(str(q) for q in qids[:5])
-        data = api_get(
-            f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list"
-            f"&qids={qid_str}&status=Active&truncation_limit=200"
-            f"&show_qds=1&filter_superseded_qids=1",
-            timeout=180
-        )
-        if data:
-            try:
-                root = ET.fromstring(data)
-                qid_set = set(qids)
-                for host in root.findall('.//HOST'):
-                    hid = host.findtext('ID', '')
-                    ip = host.findtext('IP', '')
-                    hostname = host.findtext('DNS', '')
-                    for d in host.findall('.//DETECTION'):
-                        det_qid = int(d.findtext('QID', '0'))
-                        if det_qid in qid_set:
-                            result['affectedHosts'].append({
-                                'hostId': hid, 'ip': ip, 'hostname': hostname,
-                                'qid': det_qid,
-                                'status': d.findtext('STATUS', ''),
-                                'firstFound': d.findtext('FIRST_FOUND_DATETIME', ''),
-                            })
-                            break
-            except ET.ParseError:
-                pass
+        result['allKbDetails'].sort(key=lambda x: x['severity'], reverse=True)
 
-    result['summary']['hostsAffected'] = len(result['affectedHosts'])
     return result
 
 
 @mcp.tool()
 def get_security_posture() -> dict:
-    """Get overall security health score and stats across assets, vulns, containers, and cloud."""
+    """Get overall security health score and stats across assets, vulns, containers, and cloud. Uses fast CSAM v2 counts (~5s)."""
     health = 100
     result = {'healthScore': 0, 'assets': {'total': 0, 'highRisk': 0},
               'vulns': {'critical': 0, 'high': 0}, 'containers': {'total': 0, 'atRisk': 0},
               'cloud': {'accounts': 0, 'failedControls': 0}, 'warnings': []}
 
-    # Run everything concurrently
+    # All fast CSAM v2 count queries (~0.2s each, run in parallel)
     concurrent = _run_concurrent(
-        asset_count=lambda: get_asset_count(),
-        high_risk=lambda: get_assets(100, 'truriskScore:[700-1000]'),
-        crit_dets=lambda: get_detections(5, 100, qds_min=90),
-        high_dets=lambda: get_detections(4, 100, qds_min=70),
+        asset_count=lambda: csam_count(),
+        risk_900=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "900"}]),
+        risk_700=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "700"}]),
+        risk_500=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}]),
+        eol_os=lambda: csam_count([{"field": "operatingSystem.lifecycle.stage", "operator": "CONTAINS", "value": "EOL"}]),
         images=lambda: get_images(50),
         vuln_images=lambda: get_images(30, 5),
         containers=lambda: get_containers(50),
@@ -694,20 +700,22 @@ def get_security_posture() -> dict:
 
     # Assets
     total = concurrent.get('asset_count') or 0
-    high_risk = concurrent.get('high_risk') or []
+    risk_900 = concurrent.get('risk_900') or 0
+    risk_700 = concurrent.get('risk_700') or 0
+    risk_500 = concurrent.get('risk_500') or 0
+    eol_count = concurrent.get('eol_os') or 0
     result['assets']['total'] = total
-    result['assets']['highRisk'] = len(high_risk)
+    result['assets']['highRisk'] = risk_700
     if total > 0:
-        health -= int(len(high_risk) / total * 50)
+        health -= min(50, int(risk_700 / total * 100))
 
-    # Vulns
-    crit_dets = concurrent.get('crit_dets') or []
-    high_dets = concurrent.get('high_dets') or []
-    result['vulns']['critical'] = len(crit_dets)
-    result['vulns']['high'] = len(high_dets)
-    if len(crit_dets) > 50:
+    # Risk-based severity (TruRisk ranges as proxy for vuln severity)
+    result['vulns']['critical'] = risk_900  # assets with TruRisk > 900
+    result['vulns']['high'] = risk_500  # assets with TruRisk > 500
+    result['vulns']['eolSystems'] = eol_count
+    if risk_900 > 50:
         health -= 20
-    elif len(crit_dets) > 10:
+    elif risk_900 > 10:
         health -= 10
 
     # Containers
@@ -739,35 +747,53 @@ def get_security_posture() -> dict:
 
 @mcp.tool()
 def get_patch_status(limit: int = 20) -> dict:
-    """Get patching coverage - how many assets need patches and which patches are most common."""
-    result = {'coverage': 0, 'assetsTotal': 0, 'assetsNeedPatches': 0, 'topMissing': []}
+    """Get patching coverage - TruRisk distribution and top assets needing remediation. Fast (~5s). Use get_asset_risk(assetId) for per-asset patch details."""
+    result = {'coverage': 0, 'assetsTotal': 0, 'riskDistribution': {},
+              'highRiskAssets': []}
 
-    # Run asset count and detections concurrently
+    # All fast CSAM v2 queries (~0.2-3s each, run in parallel)
     concurrent = _run_concurrent(
-        total=lambda: get_asset_count(),
-        dets=lambda: get_detections(5, 200, qds_min=70),
+        total=lambda: csam_count(),
+        risk_900=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "900"}]),
+        risk_700=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "700"}]),
+        risk_500=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}]),
+        risk_100=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "100"}]),
+        top_risk=lambda: csam_search(
+            [{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}],
+            limit=limit
+        ),
     )
 
-    result['assetsTotal'] = concurrent.get('total') or 0
-    dets = concurrent.get('dets') or []
+    total = concurrent.get('total') or 0
+    risk_900 = concurrent.get('risk_900') or 0
+    risk_700 = concurrent.get('risk_700') or 0
+    risk_500 = concurrent.get('risk_500') or 0
+    risk_100 = concurrent.get('risk_100') or 0
+    result['assetsTotal'] = total
+    result['riskDistribution'] = {
+        'critical_900plus': risk_900,
+        'high_700plus': risk_700,
+        'elevated_500plus': risk_500,
+        'medium_100plus': risk_100,
+        'low_under100': total - risk_100,
+    }
 
-    unique_qids = list(set(d['qid'] for d in dets))
-    kb_data = get_kb_batch(unique_qids)
+    # Top high-risk assets needing remediation
+    top_risk = concurrent.get('top_risk') or []
+    top_risk.sort(key=lambda a: int(a.get('riskScore') or 0), reverse=True)
+    for asset in top_risk[:limit]:
+        result['highRiskAssets'].append({
+            'assetId': str(asset.get('assetId', '')),
+            'hostId': str(asset.get('hostId') or ''),
+            'hostname': asset.get('dnsHostName', '') or asset.get('dnsName', ''),
+            'ip': asset.get('address', ''),
+            'riskScore': int(asset.get('riskScore') or 0),
+            'os': (asset.get('operatingSystem') or {}).get('osName', ''),
+        })
 
-    qid_counts = {}
-    for d in dets:
-        kb = kb_data.get(d['qid'])
-        if kb and kb.get('patch_available'):
-            qid_counts[d['qid']] = qid_counts.get(d['qid'], 0) + 1
-
-    top_qids = sorted(qid_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
-    result['topMissing'] = [{'qid': q, 'count': c, 'title': kb_data.get(q, {}).get('title', ''),
-                              'cves': kb_data.get(q, {}).get('cves', [])[:3]} for q, c in top_qids]
-
-    hosts_need = set(d['host_id'] for d in dets if d['qid'] in qid_counts)
-    result['assetsNeedPatches'] = len(hosts_need)
-    if result['assetsTotal']:
-        result['coverage'] = round((result['assetsTotal'] - len(hosts_need)) / result['assetsTotal'] * 100, 1)
+    # Coverage: % of assets with TruRisk < 100 (low risk)
+    if total > 0:
+        result['coverage'] = round((total - risk_100) / total * 100, 1)
 
     return result
 
@@ -831,36 +857,40 @@ def get_cloud_risk(limit: int = 20) -> dict:
 
 @mcp.tool()
 def get_asset_risk(asset_id: str) -> dict:
-    """Get risk summary for a specific asset - risk score, top vulnerabilities, and remediation."""
-    result = {'assetId': asset_id, 'riskScore': 0, 'vulns': []}
+    """Get risk summary for a specific asset - TruRisk score, OS, criticality, software details. Fast (~3s). Accepts CSAM assetId."""
+    result = {'assetId': asset_id, 'riskScore': 0, 'software': [], 'eolSoftware': []}
 
-    # Run asset lookup and host detections concurrently
-    concurrent = _run_concurrent(
-        asset=lambda: get_asset_by_id(asset_id),
-        dets=lambda: get_host_detections(asset_id, severity=4),
-    )
-
-    asset = concurrent.get('asset')
+    asset = get_asset_by_id(asset_id)
     if asset:
         result['ip'] = asset.get('address', '')
         result['hostname'] = asset.get('dnsHostName', '') or asset.get('dnsName', '')
-        result['riskScore'] = int(asset.get('assetRiskScore') or asset.get('truriskScore') or 0)
+        result['riskScore'] = int(asset.get('riskScore') or 0)
         result['os'] = (asset.get('operatingSystem') or {}).get('osName', '')
         result['criticality'] = get_criticality(asset)
+        result['hostId'] = str(asset.get('hostId') or '')
+        result['lastUpdated'] = asset.get('lastModifiedDate', '')
+        result['provider'] = (asset.get('cloudProvider') or {}).get('aws', {}).get('ec2', {}).get('region', {}).get('name', '') if asset.get('cloudProvider') else ''
 
-    asset_dets = concurrent.get('dets') or []
-    if asset_dets:
-        kb_data = get_kb_batch([d['qid'] for d in asset_dets[:10]])
-        for d in asset_dets[:10]:
-            kb = kb_data.get(d['qid'])
-            result['vulns'].append({
-                'qid': d['qid'],
-                'title': kb['title'] if kb else '',
-                'severity': d['severity'],
-                'qds': d.get('qds', 0),
-                'patchAvailable': kb.get('patch_available', False) if kb else False,
-                'fix': (kb.get('solution', '') if kb else '')[:150],
-            })
+        # Extract software info if available
+        sw_list = asset.get('softwareListData', {})
+        if sw_list and isinstance(sw_list, dict):
+            for sw in (sw_list.get('software') or [])[:20]:
+                sw_info = {
+                    'name': sw.get('name', ''),
+                    'version': sw.get('version', ''),
+                }
+                lifecycle = (sw.get('lifecycle') or {})
+                if lifecycle.get('stage'):
+                    sw_info['lifecycleStage'] = lifecycle['stage']
+                    if is_eol_stage(lifecycle['stage']):
+                        result['eolSoftware'].append(sw_info)
+                result['software'].append(sw_info)
+
+        # Extract OS lifecycle
+        os_info = asset.get('operatingSystem') or {}
+        os_lifecycle = (os_info.get('lifecycle') or {})
+        if os_lifecycle.get('stage'):
+            result['osLifecycle'] = os_lifecycle['stage']
 
     return result
 
@@ -872,8 +902,8 @@ def get_tech_debt(limit: int = 100) -> dict:
 
     # Run OS and hardware EOL fetches concurrently
     concurrent = _run_concurrent(
-        os_eol=lambda: fetch_all_eol("operatingSystem.lifecycle.stage:`EOL` OR operatingSystem.lifecycle.stage:`EOL/EOS`", limit, max_pages),
-        hw_eol=lambda: fetch_all_eol("hardware.lifecycle.stage:`EOL/EOS`", limit, max_pages),
+        os_eol=lambda: fetch_all_eol('os', limit, max_pages),
+        hw_eol=lambda: fetch_all_eol('hardware', limit, max_pages),
     )
 
     result = {
