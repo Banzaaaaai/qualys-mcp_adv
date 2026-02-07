@@ -951,6 +951,7 @@ def get_compliance_gaps(limit: int = 20) -> dict:
     return result
 
 
+@mcp.tool()
 def get_cloud_risk(limit: int = 20) -> dict:
     """Get cloud security posture across AWS, Azure, GCP - accounts, failed controls, and threats."""
     result = {'accounts': [], 'failedControls': [], 'threats': [], 'stats': {'total': 0, 'critical': 0}}
@@ -999,13 +1000,15 @@ def get_asset_risk(asset_id: str) -> dict:
         # Extract software info if available
         sw_list = asset.get('softwareListData', {})
         if sw_list and isinstance(sw_list, dict):
-            for sw in (sw_list.get('software') or [])[:20]:
+            for sw in (sw_list.get('software') or [])[:30]:
+                name = sw.get('fullName') or sw.get('productName') or sw.get('name') or ''
                 sw_info = {
-                    'name': sw.get('name', ''),
+                    'name': name.strip(),
                     'version': sw.get('version', ''),
+                    'category': sw.get('category', ''),
                 }
                 lifecycle = (sw.get('lifecycle') or {})
-                if lifecycle.get('stage'):
+                if lifecycle.get('stage') and lifecycle['stage'] not in ('Unknown', 'Not Applicable', 'OS Dependent'):
                     sw_info['lifecycleStage'] = lifecycle['stage']
                     if is_eol_stage(lifecycle['stage']):
                         result['eolSoftware'].append(sw_info)
@@ -1043,6 +1046,7 @@ def get_tech_debt(limit: int = 100) -> dict:
     return result
 
 
+@mcp.tool()
 def get_image_vulns(image_id: str, limit: int = 50) -> dict:
     """Get vulnerabilities for a specific container image. Returns severity breakdown and top vulns."""
     result = {
