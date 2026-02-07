@@ -855,8 +855,9 @@ def get_patch_status(limit: int = 20) -> dict:
 @mcp.tool()
 def get_threat_intel(threat_type: str = "", days: int = 30) -> dict:
     """Get vulnerability threat intelligence from Qualys KB. Shows RTI (Real-Time Threat Indicator) breakdown for recently published vulnerabilities.
-    Optional threat_type filter: Ransomware, Malware, Active_Attacks, Exploit_Public, Easy_Exploit, Wormable, Cisa_Known_Exploited_Vulns, etc.
-    Default shows all RTI types for vulns published in last 30 days (~10s)."""
+    threat_type filters: Ransomware, Malware, Active_Attacks, Exploit_Public, Easy_Exploit, Wormable, Cisa_Known_Exploited_Vulns, Denial_of_Service, Privilege_Escalation, Remote_Code_Execution, Predicted_High_Risk, Unauthenticated_Exploitation.
+    Use 'Ransomware' for ransomware-linked vulns, 'Active_Attacks' for actively exploited, 'Exploit_Public' for weaponized exploits, 'Cisa_Known_Exploited_Vulns' for CISA KEV list.
+    Default (no filter) shows all RTI types for vulns published in last 30 days (~10s)."""
     from datetime import timedelta
     after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
     result = {'days': days, 'threatFilter': threat_type or 'all',
@@ -922,6 +923,191 @@ def get_threat_intel(threat_type: str = "", days: int = 30) -> dict:
         f"{len(matching)} vulns with {filter_label} out of {len(all_vulns)} "
         f"published in last {days} days. {patched} have patches available."
     )
+    return result
+
+
+@mcp.tool()
+def get_new_vulns(days: int = 7) -> dict:
+    """Get newly published vulnerabilities from the Qualys Knowledge Base. Returns CVEs, severity, RTI threat tags, and patch status for vulns published in the last N days. Fast (~5s for 7 days). Use days=1 for today's vulns, days=30 for the last month."""
+    after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
+    result = {'days': days, 'publishedAfter': after, 'totalVulns': 0,
+              'severityBreakdown': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0},
+              'withPatch': 0, 'withThreatIntel': 0, 'vulns': []}
+
+    data = api_get(
+        f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&details=All"
+        f"&published_after={after}",
+        timeout=30
+    )
+    if not data:
+        result['error'] = 'Failed to fetch KB data'
+        return result
+
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        result['error'] = 'Failed to parse KB data'
+        return result
+
+    all_vulns = []
+    for v in root.findall('.//VULN'):
+        parsed = parse_vuln_xml(v)
+        KB_CACHE[parsed['qid']] = parsed
+        all_vulns.append(parsed)
+
+        sev = parsed['severity']
+        if sev >= 5:
+            result['severityBreakdown']['critical'] += 1
+        elif sev >= 4:
+            result['severityBreakdown']['high'] += 1
+        elif sev >= 3:
+            result['severityBreakdown']['medium'] += 1
+        else:
+            result['severityBreakdown']['low'] += 1
+
+        if parsed.get('patch_available'):
+            result['withPatch'] += 1
+        if parsed.get('threat_intel'):
+            result['withThreatIntel'] += 1
+
+    result['totalVulns'] = len(all_vulns)
+
+    # Sort by severity desc, then by threat intel count
+    all_vulns.sort(key=lambda x: (-x['severity'], -len(x.get('threat_intel', []))))
+    for v in all_vulns[:100]:
+        result['vulns'].append({
+            'qid': v['qid'],
+            'title': v['title'],
+            'severity': v['severity'],
+            'cves': v.get('cves', [])[:5],
+            'patchAvailable': v.get('patch_available', False),
+            'threatIntel': v.get('threat_intel', []),
+            'ransomware': v.get('ransomware', False),
+        })
+
+    return result
+
+
+@mcp.tool()
+def get_vulns_by_software(software: str) -> dict:
+    """Search for vulnerabilities affecting a specific software, vendor, or product. Searches Qualys KB by title and diagnosis text. Examples: 'Apache', 'F5 BIG-IP', 'OpenSSL', 'Microsoft Exchange'. Fast (~5s)."""
+    result = {'software': software, 'totalVulns': 0,
+              'severityBreakdown': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0},
+              'withPatch': 0, 'vulns': []}
+
+    # KB API doesn't have a server-side software filter, so we search by title
+    # Use the most recent vulns (last 90 days) to keep it fast
+    after = (datetime.now(timezone.utc) - timedelta(days=90)).strftime('%Y-%m-%d')
+    data = api_get(
+        f"{BASE_URL}/api/2.0/fo/knowledge_base/vuln/?action=list&details=All"
+        f"&published_after={after}",
+        timeout=30
+    )
+    if not data:
+        result['error'] = 'Failed to fetch KB data'
+        return result
+
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        result['error'] = 'Failed to parse KB data'
+        return result
+
+    search_lower = software.lower()
+    matching = []
+    for v in root.findall('.//VULN'):
+        parsed = parse_vuln_xml(v)
+        KB_CACHE[parsed['qid']] = parsed
+        title = parsed.get('title', '').lower()
+        diagnosis = parsed.get('diagnosis', '').lower()
+        if search_lower in title or search_lower in diagnosis:
+            matching.append(parsed)
+
+    result['totalVulns'] = len(matching)
+    for v in matching:
+        sev = v['severity']
+        if sev >= 5:
+            result['severityBreakdown']['critical'] += 1
+        elif sev >= 4:
+            result['severityBreakdown']['high'] += 1
+        elif sev >= 3:
+            result['severityBreakdown']['medium'] += 1
+        else:
+            result['severityBreakdown']['low'] += 1
+        if v.get('patch_available'):
+            result['withPatch'] += 1
+
+    matching.sort(key=lambda x: (-x['severity'], -len(x.get('threat_intel', []))))
+    for v in matching[:100]:
+        result['vulns'].append({
+            'qid': v['qid'],
+            'title': v['title'],
+            'severity': v['severity'],
+            'cves': v.get('cves', [])[:5],
+            'patchAvailable': v.get('patch_available', False),
+            'threatIntel': v.get('threat_intel', []),
+            'ransomware': v.get('ransomware', False),
+        })
+
+    return result
+
+
+@mcp.tool()
+def get_cve_details(cves: str) -> dict:
+    """Get details for multiple CVEs at once. Accepts comma-separated CVE IDs (e.g. 'CVE-2021-44228,CVE-2024-3400'). Returns severity, patches, threat intel, and remediation for each. Fast (~5s)."""
+    cve_list = [c.strip() for c in cves.split(',') if c.strip()]
+    result = {'requested': len(cve_list), 'found': 0, 'cves': []}
+
+    def fetch_cve(cve):
+        qids = get_cve_qids(cve)
+        if not qids:
+            return {'cve': cve, 'found': False}
+        kb_data = get_kb_batch(qids[:20])
+        max_sev = 0
+        best = None
+        all_threat_intel = set()
+        is_ransomware = False
+        all_kb = []
+        for qid in qids:
+            kb = kb_data.get(qid)
+            if kb:
+                if kb.get('severity', 0) > max_sev:
+                    max_sev = kb['severity']
+                    best = kb
+                all_threat_intel.update(kb.get('threat_intel', []))
+                if kb.get('ransomware'):
+                    is_ransomware = True
+                all_kb.append({
+                    'qid': qid,
+                    'title': kb.get('title', ''),
+                    'severity': kb.get('severity', 0),
+                    'patchAvailable': kb.get('patch_available', False),
+                })
+        entry = {
+            'cve': cve, 'found': True, 'qids': qids,
+            'severity': max_sev,
+            'title': best.get('title', '') if best else '',
+            'patchAvailable': best.get('patch_available', False) if best else False,
+            'solution': (best.get('solution', '') if best else '')[:500],
+            'diagnosis': (best.get('diagnosis', '') if best else '')[:300],
+            'threatIntel': sorted(all_threat_intel),
+            'ransomware': is_ransomware,
+            'kbEntries': all_kb,
+        }
+        return entry
+
+    # Fetch all CVEs concurrently
+    tasks = {cve: (lambda c=cve: fetch_cve(c)) for cve in cve_list[:20]}
+    fetched = _run_concurrent(**tasks)
+
+    for cve in cve_list[:20]:
+        entry = fetched.get(cve)
+        if entry:
+            if entry.get('found'):
+                result['found'] += 1
+            result['cves'].append(entry)
+
+    result['cves'].sort(key=lambda x: (-x.get('severity', 0), x['cve']))
     return result
 
 
