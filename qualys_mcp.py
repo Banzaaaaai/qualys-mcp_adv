@@ -926,6 +926,229 @@ def get_threat_intel(threat_type: str = "", days: int = 30) -> dict:
     return result
 
 
+def _get_first_cloud_evals():
+    """Get evaluations from the first available cloud connector."""
+    for provider, acc_key in [('aws', 'awsAccountId'), ('azure', 'azureSubscriptionId'), ('gcp', 'gcpProjectId')]:
+        conns = get_connectors(provider, 1)
+        if conns:
+            acc = conns[0].get(acc_key)
+            if acc:
+                return get_evaluations(acc, provider, 100)
+    return []
+
+
+@mcp.tool()
+def get_recommendations() -> dict:
+    """Security program coach - analyzes your environment and recommends Qualys modules and actions to reduce risk. Checks for gaps in container scanning, cloud posture, patch coverage, EOL systems, threat exposure, and web app security. Returns prioritized recommendations."""
+    result = {'recommendations': [], 'coverage': {}, 'summary': ''}
+    recs = []
+
+    # Probe all data sources concurrently to find gaps
+    concurrent = _run_concurrent(
+        total=lambda: csam_count(),
+        risk_900=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "900"}]),
+        risk_500=lambda: csam_count([{"field": "asset.truRisk", "operator": "GREATER", "value": "500"}]),
+        eol_count=lambda: csam_count([{"field": "operatingSystem.lifecycle.stage", "operator": "CONTAINS", "value": "EOL"}]),
+        images=lambda: get_images(10),
+        vuln_images=lambda: get_images(10, 5),
+        containers=lambda: get_containers(10),
+        cloud_aws=lambda: get_connectors('aws', 5),
+        cloud_azure=lambda: get_connectors('azure', 5),
+        cloud_gcp=lambda: get_connectors('gcp', 5),
+        cloud_evals=lambda: _get_first_cloud_evals(),
+        was=lambda: get_was_findings(5, 4),
+        fim=lambda: get_fim_events(5, 7),
+        edr=lambda: get_edr_events(5),
+        certs=lambda: get_certificates(5, 30),
+        ransomware_vulns=lambda: get_threat_intel.fn(threat_type='Ransomware', days=30),
+    )
+
+    total = concurrent.get('total') or 0
+    risk_900 = concurrent.get('risk_900') or 0
+    risk_500 = concurrent.get('risk_500') or 0
+    eol_count = concurrent.get('eol_count') or 0
+    images = concurrent.get('images') or []
+    vuln_images = concurrent.get('vuln_images') or []
+    containers = concurrent.get('containers') or []
+    cloud_aws = concurrent.get('cloud_aws') or []
+    cloud_azure = concurrent.get('cloud_azure') or []
+    cloud_gcp = concurrent.get('cloud_gcp') or []
+    was = concurrent.get('was') or []
+    fim = concurrent.get('fim') or []
+    edr = concurrent.get('edr') or []
+    certs = concurrent.get('certs') or []
+    ransomware = concurrent.get('ransomware_vulns') or {}
+
+    # Track what's active vs missing
+    coverage = {
+        'vmdr': True,  # If we got asset counts, VMDR is active
+        'containerSecurity': len(images) > 0,
+        'cloudSecurity': len(cloud_aws) + len(cloud_azure) + len(cloud_gcp) > 0,
+        'webAppScanning': len(was) > 0,
+        'fileIntegrityMonitoring': len(fim) > 0,
+        'endpointDetection': len(edr) > 0,
+        'certificateView': len(certs) > 0,
+    }
+    result['coverage'] = coverage
+
+    rank = 1
+
+    # --- Critical risk assets ---
+    if risk_900 > 0:
+        recs.append({
+            'rank': rank, 'priority': 'CRITICAL',
+            'area': 'Vulnerability Remediation',
+            'finding': f'{risk_900} assets have TruRisk scores above 900 (maximum risk)',
+            'recommendation': 'Deploy Qualys Patch Management to automate patching on highest-risk assets. Use VMDR prioritization to focus on vulnerabilities with active exploits and ransomware linkage.',
+            'qualysModule': 'Patch Management (PM)',
+        })
+        rank += 1
+
+    # --- EOL/EOS systems ---
+    if eol_count > 0:
+        pct = round(eol_count / total * 100, 1) if total else 0
+        recs.append({
+            'rank': rank, 'priority': 'HIGH',
+            'area': 'Asset Lifecycle',
+            'finding': f'{eol_count} systems ({pct}% of environment) are running EOL/EOS operating systems that no longer receive security patches',
+            'recommendation': 'Establish an EOL migration program. Use CyberSecurity Asset Management (CSAM) lifecycle tracking to identify and plan upgrades. For systems that cannot be migrated, implement compensating controls with Policy Compliance.',
+            'qualysModule': 'CyberSecurity Asset Management (CSAM)',
+        })
+        rank += 1
+
+    # --- Container security gaps ---
+    if not images:
+        recs.append({
+            'rank': rank, 'priority': 'HIGH',
+            'area': 'Container Security',
+            'finding': 'No container images detected — container workloads may be running unscanned',
+            'recommendation': 'Deploy Qualys Container Security to scan images in registries and running containers. Integrate with CI/CD pipelines to catch vulnerabilities before deployment.',
+            'qualysModule': 'Container Security (CS)',
+        })
+        rank += 1
+    elif vuln_images:
+        vuln_img_ids = {img.get('imageId') for img in vuln_images}
+        at_risk = [c for c in containers if c.get('imageId') in vuln_img_ids]
+        if at_risk:
+            recs.append({
+                'rank': rank, 'priority': 'HIGH',
+                'area': 'Container Security',
+                'finding': f'{len(at_risk)} running containers are based on images with critical vulnerabilities',
+                'recommendation': 'Rebuild affected container images with patched base images. Set up Qualys Container Security runtime policies to block deployment of vulnerable images.',
+                'qualysModule': 'Container Security (CS)',
+            })
+            rank += 1
+
+    # --- Cloud security gaps ---
+    cloud_total = len(cloud_aws) + len(cloud_azure) + len(cloud_gcp)
+    cloud_evals = concurrent.get('cloud_evals') or []
+    if not cloud_total:
+        recs.append({
+            'rank': rank, 'priority': 'MEDIUM',
+            'area': 'Cloud Security Posture',
+            'finding': 'No cloud connectors configured — cloud assets may have unmonitored misconfigurations',
+            'recommendation': 'Connect AWS, Azure, and/or GCP accounts using Qualys TotalCloud. This enables continuous posture monitoring, misconfiguration detection, and Cloud Detection & Response (CDR).',
+            'qualysModule': 'TotalCloud / CloudView',
+        })
+        rank += 1
+    else:
+        fails = [e for e in cloud_evals if e.get('result') in ['FAIL', 'FAILED']]
+        if fails:
+            recs.append({
+                'rank': rank, 'priority': 'MEDIUM',
+                'area': 'Cloud Security Posture',
+                'finding': f'{len(fails)} cloud security control failures detected across {cloud_total} connected accounts',
+                'recommendation': 'Review and remediate failing CIS Benchmark controls. Enable Qualys Policy Compliance for cloud workloads to maintain continuous compliance. Set up auto-remediation for common misconfigurations.',
+                'qualysModule': 'Policy Compliance (PC) + TotalCloud',
+            })
+            rank += 1
+
+    # --- Web application scanning ---
+    if not was:
+        recs.append({
+            'rank': rank, 'priority': 'MEDIUM',
+            'area': 'Web Application Security',
+            'finding': 'No web application scan findings detected — web apps may not be scanned for vulnerabilities like SQLi, XSS, and OWASP Top 10',
+            'recommendation': 'Deploy Qualys Web Application Scanning (WAS) to discover and scan web applications. Schedule recurring scans and integrate with development workflows.',
+            'qualysModule': 'Web Application Scanning (WAS)',
+        })
+        rank += 1
+
+    # --- FIM ---
+    if not fim:
+        recs.append({
+            'rank': rank, 'priority': 'MEDIUM',
+            'area': 'File Integrity Monitoring',
+            'finding': 'No file integrity monitoring events detected — unauthorized changes to critical files may go undetected',
+            'recommendation': 'Deploy Qualys FIM on critical servers to monitor changes to system files, configurations, and registries. Required for PCI DSS Requirement 11.5 and many compliance frameworks.',
+            'qualysModule': 'File Integrity Monitoring (FIM)',
+        })
+        rank += 1
+
+    # --- EDR ---
+    if not edr:
+        recs.append({
+            'rank': rank, 'priority': 'MEDIUM',
+            'area': 'Endpoint Detection & Response',
+            'finding': 'No endpoint detection events — active threats and malicious behaviors may not be detected in real time',
+            'recommendation': 'Enable Qualys Multi-Vector EDR to detect and respond to endpoint threats. Combines vulnerability context with behavioral detection for faster incident response.',
+            'qualysModule': 'Multi-Vector EDR',
+        })
+        rank += 1
+
+    # --- Certificate management ---
+    if not certs:
+        recs.append({
+            'rank': rank, 'priority': 'LOW',
+            'area': 'Certificate Management',
+            'finding': 'No certificate data available — expired or weak SSL/TLS certificates may cause outages or security gaps',
+            'recommendation': 'Deploy Qualys CertView to discover and monitor all SSL/TLS certificates across your environment. Set up expiration alerts to prevent outages.',
+            'qualysModule': 'CertView',
+        })
+        rank += 1
+
+    # --- Ransomware exposure ---
+    ransomware_count = ransomware.get('totalMatching', 0)
+    if ransomware_count > 0:
+        recs.append({
+            'rank': rank, 'priority': 'HIGH',
+            'area': 'Ransomware Defense',
+            'finding': f'{ransomware_count} vulnerabilities with ransomware linkage published in last 30 days',
+            'recommendation': 'Use VMDR TruRisk prioritization to focus patching on ransomware-linked CVEs first. Deploy Patch Management for automated remediation. Consider Qualys EDR for behavioral ransomware detection.',
+            'qualysModule': 'VMDR + Patch Management + EDR',
+        })
+        rank += 1
+
+    # --- High unpatched ratio ---
+    if total > 0 and risk_500 > 0:
+        risk_pct = round(risk_500 / total * 100, 1)
+        if risk_pct > 10:
+            recs.append({
+                'rank': rank, 'priority': 'HIGH',
+                'area': 'Patch Coverage',
+                'finding': f'{risk_500} assets ({risk_pct}%) have elevated risk (TruRisk > 500) indicating significant unpatched vulnerabilities',
+                'recommendation': 'Accelerate patch cycles using Qualys Patch Management. Set up patch deployment jobs targeting highest-TruRisk assets first. Use VMDR correlation to identify which patches reduce the most risk.',
+                'qualysModule': 'Patch Management (PM)',
+            })
+            rank += 1
+
+    result['recommendations'] = recs
+
+    active = sum(1 for v in coverage.values() if v)
+    total_modules = len(coverage)
+    result['summary'] = (
+        f'{len(recs)} recommendations across {total} assets. '
+        f'Module coverage: {active}/{total_modules} security capabilities active. '
+        f'Top priorities: {"critical risk remediation, " if risk_900 else ""}'
+        f'{"EOL migration, " if eol_count else ""}'
+        f'{"container scanning, " if not images else ""}'
+        f'{"cloud posture, " if not cloud_total else ""}'
+        f'{"web app scanning" if not was else "patch acceleration"}'
+    )
+
+    return result
+
+
 @mcp.tool()
 def get_morning_report() -> dict:
     """Daily security briefing - what happened overnight. Returns new vulnerabilities (last 24h) with ransomware/active exploit flags, environment health score, top risk assets, EOL count, and action items. Use this first thing in the morning or at shift start."""
