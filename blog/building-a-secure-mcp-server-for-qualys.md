@@ -20,7 +20,7 @@ Qualys has comprehensive security APIs, but using them requires:
 1. Knowing which of the 30+ API endpoints to hit
 2. Understanding XML vs JSON response formats
 3. Handling JWT tokens for Gateway API vs Basic Auth for classic API
-4. Manually correlating data across VMDR, CSAM, KB, CloudView, and Container Security
+4. Manually correlating data across VMDR, CSAM, KB, and TotalCloud
 
 An MCP server abstracts all of this. Security teams just ask questions:
 
@@ -50,7 +50,7 @@ Instead, we built 12 *question-answering* tools. Each tool answers a specific se
 | `get_asset_risk` | Why is this asset risky? | CSAM v2 search |
 | `get_tech_debt` | EOL systems? | CSAM v2 (lifecycle filters) |
 | `get_cloud_risk` | Cloud posture? | CloudView connectors + evaluations |
-| `get_image_vulns` | Container vulnerabilities? | Container Security API |
+| `get_image_vulns` | Container vulnerabilities? | TotalCloud API |
 
 ## Architecture: Single File, No Framework
 
@@ -84,7 +84,7 @@ def api_get(url, gateway=False, timeout=30):
 ```
 
 - **Classic API** (`qualysapi.*`): Basic Auth, XML responses. Used for KB (vulnerability data).
-- **Gateway API** (`gateway.*`): JWT Bearer tokens (refreshed every 3.5 hours), JSON responses. Used for CSAM (assets), CloudView, Container Security.
+- **Gateway API** (`gateway.*`): JWT Bearer tokens (refreshed every 3.5 hours), JSON responses. Used for CSAM (assets), TotalCloud (cloud + containers), TotalAppSec.
 
 The server handles token lifecycle automatically — users never see auth complexity.
 

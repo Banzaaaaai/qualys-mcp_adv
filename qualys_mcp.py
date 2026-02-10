@@ -466,7 +466,7 @@ def get_was_findings(limit=100, severity=None):
                 })
             return findings
     except Exception as e:
-        _log(f"WAS findings error: {e}")
+        _log(f"TAS findings error: {e}")
         return []
 
 
@@ -939,7 +939,7 @@ def _get_first_cloud_evals():
 
 @mcp.tool()
 def get_recommendations() -> dict:
-    """Security program coach - analyzes your environment and recommends Qualys modules and actions to reduce risk. Checks for gaps in container scanning, cloud posture, patch coverage, EOL systems, threat exposure, and web app security. Returns prioritized recommendations."""
+    """Security program coach - analyzes your environment and recommends Qualys modules and actions to reduce risk. Checks for gaps in container scanning, cloud posture, patch coverage, EOL systems, threat exposure, and application security. Returns prioritized recommendations."""
     result = {'recommendations': [], 'coverage': {}, 'summary': ''}
     recs = []
 
@@ -982,9 +982,8 @@ def get_recommendations() -> dict:
     # Track what's active vs missing
     coverage = {
         'vmdr': True,  # If we got asset counts, VMDR is active
-        'containerSecurity': len(images) > 0,
-        'cloudSecurity': len(cloud_aws) + len(cloud_azure) + len(cloud_gcp) > 0,
-        'webAppScanning': len(was) > 0,
+        'totalCloud': len(images) > 0 or len(cloud_aws) + len(cloud_azure) + len(cloud_gcp) > 0,
+        'totalAppSec': len(was) > 0,
         'fileIntegrityMonitoring': len(fim) > 0,
         'endpointDetection': len(edr) > 0,
         'certificateView': len(certs) > 0,
@@ -997,10 +996,11 @@ def get_recommendations() -> dict:
     if risk_900 > 0:
         recs.append({
             'rank': rank, 'priority': 'CRITICAL',
-            'area': 'Vulnerability Remediation',
+            'area': 'Risk Elimination',
             'finding': f'{risk_900} assets have TruRisk scores above 900 (maximum risk)',
-            'recommendation': 'Deploy Qualys Patch Management to automate patching on highest-risk assets. Use VMDR prioritization to focus on vulnerabilities with active exploits and ransomware linkage.',
-            'qualysModule': 'Patch Management (PM)',
+            'recommendation': f'Eliminate risk on {risk_900} critical assets with Qualys Patch Management. Auto-deploy patches for vulnerabilities with active exploits and ransomware linkage — each patch eliminates the associated TruRisk. For vulnerabilities without patches, use Qualys VMDR mitigations (compensating controls, network segmentation) to reduce risk until a fix is available.',
+            'qualysModule': 'Patch Management + VMDR',
+            'riskAction': 'eliminate',
         })
         rank += 1
 
@@ -1011,8 +1011,9 @@ def get_recommendations() -> dict:
             'rank': rank, 'priority': 'HIGH',
             'area': 'Asset Lifecycle',
             'finding': f'{eol_count} systems ({pct}% of environment) are running EOL/EOS operating systems that no longer receive security patches',
-            'recommendation': 'Establish an EOL migration program. Use CyberSecurity Asset Management (CSAM) lifecycle tracking to identify and plan upgrades. For systems that cannot be migrated, implement compensating controls with Policy Compliance.',
-            'qualysModule': 'CyberSecurity Asset Management (CSAM)',
+            'recommendation': f'Eliminate risk by migrating {eol_count} EOL/EOS systems to supported versions. Use CSAM lifecycle tracking to plan upgrades. For systems that cannot be migrated immediately, mitigate risk with Policy Compliance compensating controls and network segmentation until migration is complete.',
+            'qualysModule': 'CSAM + Patch Management',
+            'riskAction': 'eliminate',
         })
         rank += 1
 
@@ -1020,10 +1021,11 @@ def get_recommendations() -> dict:
     if not images:
         recs.append({
             'rank': rank, 'priority': 'HIGH',
-            'area': 'Container Security',
+            'area': 'Container & Cloud Security',
             'finding': 'No container images detected — container workloads may be running unscanned',
-            'recommendation': 'Deploy Qualys Container Security to scan images in registries and running containers. Integrate with CI/CD pipelines to catch vulnerabilities before deployment.',
-            'qualysModule': 'Container Security (CS)',
+            'recommendation': 'Deploy Qualys TotalCloud to scan container images in registries and running containers. Integrate with CI/CD pipelines to catch and eliminate vulnerabilities before deployment.',
+            'qualysModule': 'TotalCloud',
+            'riskAction': 'eliminate',
         })
         rank += 1
     elif vuln_images:
@@ -1032,10 +1034,11 @@ def get_recommendations() -> dict:
         if at_risk:
             recs.append({
                 'rank': rank, 'priority': 'HIGH',
-                'area': 'Container Security',
+                'area': 'Container & Cloud Security',
                 'finding': f'{len(at_risk)} running containers are based on images with critical vulnerabilities',
-                'recommendation': 'Rebuild affected container images with patched base images. Set up Qualys Container Security runtime policies to block deployment of vulnerable images.',
-                'qualysModule': 'Container Security (CS)',
+                'recommendation': f'Eliminate container risk by rebuilding {len(at_risk)} affected images with patched base images. Set up Qualys TotalCloud runtime policies to block deployment of vulnerable images and prevent future risk.',
+                'qualysModule': 'TotalCloud',
+                'riskAction': 'eliminate',
             })
             rank += 1
 
@@ -1047,8 +1050,9 @@ def get_recommendations() -> dict:
             'rank': rank, 'priority': 'MEDIUM',
             'area': 'Cloud Security Posture',
             'finding': 'No cloud connectors configured — cloud assets may have unmonitored misconfigurations',
-            'recommendation': 'Connect AWS, Azure, and/or GCP accounts using Qualys TotalCloud. This enables continuous posture monitoring, misconfiguration detection, and Cloud Detection & Response (CDR).',
-            'qualysModule': 'TotalCloud / CloudView',
+            'recommendation': 'Connect AWS, Azure, and/or GCP accounts using Qualys TotalCloud. Eliminate cloud misconfigurations with continuous posture monitoring, auto-remediation, and Cloud Detection & Response (CDR).',
+            'qualysModule': 'TotalCloud',
+            'riskAction': 'mitigate',
         })
         rank += 1
     else:
@@ -1058,19 +1062,21 @@ def get_recommendations() -> dict:
                 'rank': rank, 'priority': 'MEDIUM',
                 'area': 'Cloud Security Posture',
                 'finding': f'{len(fails)} cloud security control failures detected across {cloud_total} connected accounts',
-                'recommendation': 'Review and remediate failing CIS Benchmark controls. Enable Qualys Policy Compliance for cloud workloads to maintain continuous compliance. Set up auto-remediation for common misconfigurations.',
-                'qualysModule': 'Policy Compliance (PC) + TotalCloud',
+                'recommendation': f'Eliminate {len(fails)} failing cloud controls by remediating CIS Benchmark violations. Use TotalCloud auto-remediation to fix common misconfigurations automatically. Mitigate remaining gaps with Policy Compliance continuous monitoring.',
+                'qualysModule': 'TotalCloud + Policy Compliance',
+                'riskAction': 'eliminate',
             })
             rank += 1
 
-    # --- Web application scanning ---
+    # --- Application security ---
     if not was:
         recs.append({
             'rank': rank, 'priority': 'MEDIUM',
-            'area': 'Web Application Security',
-            'finding': 'No web application scan findings detected — web apps may not be scanned for vulnerabilities like SQLi, XSS, and OWASP Top 10',
-            'recommendation': 'Deploy Qualys Web Application Scanning (WAS) to discover and scan web applications. Schedule recurring scans and integrate with development workflows.',
-            'qualysModule': 'Web Application Scanning (WAS)',
+            'area': 'Application Security',
+            'finding': 'No application scan findings detected — web apps and APIs may not be scanned for vulnerabilities like SQLi, XSS, and OWASP Top 10',
+            'recommendation': 'Deploy Qualys TotalAppSec (TAS) to discover and scan web applications and APIs. Eliminate application-layer risk by identifying and fixing OWASP Top 10 vulnerabilities. Integrate with CI/CD to prevent vulnerable code from reaching production.',
+            'qualysModule': 'TotalAppSec (TAS)',
+            'riskAction': 'eliminate',
         })
         rank += 1
 
@@ -1080,8 +1086,9 @@ def get_recommendations() -> dict:
             'rank': rank, 'priority': 'MEDIUM',
             'area': 'File Integrity Monitoring',
             'finding': 'No file integrity monitoring events detected — unauthorized changes to critical files may go undetected',
-            'recommendation': 'Deploy Qualys FIM on critical servers to monitor changes to system files, configurations, and registries. Required for PCI DSS Requirement 11.5 and many compliance frameworks.',
+            'recommendation': 'Mitigate risk of undetected tampering by deploying Qualys FIM on critical servers. Monitor changes to system files, configurations, and registries in real time. Required for PCI DSS Requirement 11.5 and many compliance frameworks.',
             'qualysModule': 'File Integrity Monitoring (FIM)',
+            'riskAction': 'mitigate',
         })
         rank += 1
 
@@ -1091,8 +1098,9 @@ def get_recommendations() -> dict:
             'rank': rank, 'priority': 'MEDIUM',
             'area': 'Endpoint Detection & Response',
             'finding': 'No endpoint detection events — active threats and malicious behaviors may not be detected in real time',
-            'recommendation': 'Enable Qualys Multi-Vector EDR to detect and respond to endpoint threats. Combines vulnerability context with behavioral detection for faster incident response.',
+            'recommendation': 'Mitigate active threat risk by enabling Qualys Multi-Vector EDR. Detect and respond to endpoint threats in real time. Combines vulnerability context with behavioral detection — when a patch cannot eliminate a vulnerability, EDR provides the mitigation layer.',
             'qualysModule': 'Multi-Vector EDR',
+            'riskAction': 'mitigate',
         })
         rank += 1
 
@@ -1102,8 +1110,9 @@ def get_recommendations() -> dict:
             'rank': rank, 'priority': 'LOW',
             'area': 'Certificate Management',
             'finding': 'No certificate data available — expired or weak SSL/TLS certificates may cause outages or security gaps',
-            'recommendation': 'Deploy Qualys CertView to discover and monitor all SSL/TLS certificates across your environment. Set up expiration alerts to prevent outages.',
+            'recommendation': 'Mitigate certificate-related risk by deploying Qualys CertView to discover and monitor all SSL/TLS certificates. Eliminate expired and weak certificates before they cause outages or man-in-the-middle exposure.',
             'qualysModule': 'CertView',
+            'riskAction': 'mitigate',
         })
         rank += 1
 
@@ -1114,8 +1123,9 @@ def get_recommendations() -> dict:
             'rank': rank, 'priority': 'HIGH',
             'area': 'Ransomware Defense',
             'finding': f'{ransomware_count} vulnerabilities with ransomware linkage published in last 30 days',
-            'recommendation': 'Use VMDR TruRisk prioritization to focus patching on ransomware-linked CVEs first. Deploy Patch Management for automated remediation. Consider Qualys EDR for behavioral ransomware detection.',
-            'qualysModule': 'VMDR + Patch Management + EDR',
+            'recommendation': f'Eliminate ransomware risk by patching {ransomware_count} ransomware-linked vulnerabilities with Qualys Patch Management. Patches directly eliminate the TruRisk associated with each CVE. For zero-days without patches, mitigate risk using VMDR virtual patching and network-level controls. Deploy EDR for real-time behavioral detection as a last line of defense.',
+            'qualysModule': 'Patch Management + VMDR + EDR',
+            'riskAction': 'eliminate',
         })
         rank += 1
 
@@ -1127,23 +1137,32 @@ def get_recommendations() -> dict:
                 'rank': rank, 'priority': 'HIGH',
                 'area': 'Patch Coverage',
                 'finding': f'{risk_500} assets ({risk_pct}%) have elevated risk (TruRisk > 500) indicating significant unpatched vulnerabilities',
-                'recommendation': 'Accelerate patch cycles using Qualys Patch Management. Set up patch deployment jobs targeting highest-TruRisk assets first. Use VMDR correlation to identify which patches reduce the most risk.',
-                'qualysModule': 'Patch Management (PM)',
+                'recommendation': f'Eliminate risk across {risk_500} elevated-risk assets with Qualys Patch Management. Each successfully deployed patch eliminates TruRisk for those CVEs. Target highest-TruRisk assets first for maximum risk reduction. Where patches cannot be applied immediately, mitigate with VMDR compensating controls to reduce exposure while scheduling maintenance windows.',
+                'qualysModule': 'Patch Management + VMDR',
+                'riskAction': 'eliminate',
             })
             rank += 1
 
     result['recommendations'] = recs
 
+    eliminate_count = sum(1 for r in recs if r.get('riskAction') == 'eliminate')
+    mitigate_count = sum(1 for r in recs if r.get('riskAction') == 'mitigate')
     active = sum(1 for v in coverage.values() if v)
     total_modules = len(coverage)
+    result['riskActions'] = {
+        'eliminate': eliminate_count,
+        'mitigate': mitigate_count,
+    }
     result['summary'] = (
         f'{len(recs)} recommendations across {total} assets. '
+        f'{eliminate_count} actions to eliminate risk, {mitigate_count} to mitigate. '
         f'Module coverage: {active}/{total_modules} security capabilities active. '
         f'Top priorities: {"critical risk remediation, " if risk_900 else ""}'
         f'{"EOL migration, " if eol_count else ""}'
         f'{"container scanning, " if not images else ""}'
         f'{"cloud posture, " if not cloud_total else ""}'
-        f'{"web app scanning" if not was else "patch acceleration"}'
+        f'{"app scanning, " if not was else ""}'
+        f'patch acceleration'
     )
 
     return result
@@ -1680,7 +1699,7 @@ def get_threats(days: int = 7, limit: int = 50) -> dict:
 
 
 def get_webapp_vulns(severity: int = 4, limit: int = 50) -> dict:
-    """Get web application vulnerabilities from WAS scans. Default severity 4+ (high/critical)."""
+    """Get application vulnerabilities from TotalAppSec (TAS) scans. Default severity 4+ (high/critical)."""
     result = {
         'minSeverity': severity,
         'stats': {'critical': 0, 'high': 0, 'medium': 0, 'total': 0, 'webApps': 0},
