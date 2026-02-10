@@ -1,6 +1,6 @@
 # Qualys MCP Server
 
-A lightweight MCP server that connects AI assistants to Qualys security data. **14 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
+A lightweight MCP server that connects AI assistants to Qualys security data. **15 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
 
 ## Setup
 
@@ -38,7 +38,7 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 
 ## Tools
 
-14 tools covering vulnerability management, threat intelligence, asset risk, cloud security, containers, and security program coaching.
+15 tools covering vulnerability management, threat intelligence, asset risk, cloud security, containers, TruRisk Eliminate, and security program coaching.
 
 ### Daily Operations & Coaching
 
@@ -46,6 +46,7 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 |------|----------------|
 | `get_morning_report` | What happened overnight? New vulns, ransomware/exploit flags, top risks, action items |
 | `get_recommendations` | What should we improve? Module gaps, risk reduction opportunities, prioritized next steps |
+| `get_eliminate_status` | What's our patching and mitigation status? Patch jobs, mitigation jobs, catalog coverage |
 
 ### Security Posture & Priorities
 
@@ -95,6 +96,7 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 "How many EOL systems do we have?"             → get_tech_debt()
 "What's our cloud posture?"                    → get_cloud_risk()
 "What modules should we add?"                  → get_recommendations()
+"What's our patch/mitigate status?"            → get_eliminate_status()
 ```
 
 ## Qualys PODs

@@ -12,6 +12,7 @@ from urllib.error import HTTPError, URLError
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from fastmcp import FastMCP
 
 mcp = FastMCP("qualys-mcp")
@@ -35,6 +36,7 @@ DETECTION_CACHE = {}
 DETECTION_CACHE_TIME = None
 
 AUTH_ERROR = None
+AUTH_LOCK = Lock()
 
 # SSL context for environments with self-signed certificates
 SSL_CTX = None
@@ -53,27 +55,34 @@ def _log(msg):
 
 
 def get_bearer_token():
-    """Get bearer token, refreshing if expired (tokens last ~4 hours)."""
+    """Get bearer token, refreshing if expired (tokens last ~4 hours). Thread-safe."""
     global BEARER_TOKEN, BEARER_TOKEN_TIME, AUTH_ERROR
-    # Refresh if older than 3.5 hours
+    # Fast path: valid token, no lock needed
     if BEARER_TOKEN and BEARER_TOKEN_TIME:
         age = (datetime.now(timezone.utc) - BEARER_TOKEN_TIME).total_seconds()
         if age < 12600:  # 3.5 hours
             return BEARER_TOKEN
-        _log("Bearer token expired, refreshing...")
-    try:
-        auth_data = urlencode({'username': USERNAME, 'password': PASSWORD, 'token': 'true'}).encode()
-        req = Request(f"{GATEWAY_URL}/auth", data=auth_data, method='POST')
-        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        with _open(req, timeout=30) as resp:
-            BEARER_TOKEN = resp.read().decode().strip()
-            BEARER_TOKEN_TIME = datetime.now(timezone.utc)
-            AUTH_ERROR = None
-            return BEARER_TOKEN
-    except Exception as e:
-        AUTH_ERROR = str(e)
-        _log(f"Auth error: {e}")
-        return None
+    # Serialize auth requests to prevent concurrent token fetches
+    with AUTH_LOCK:
+        # Double-check after acquiring lock (another thread may have refreshed)
+        if BEARER_TOKEN and BEARER_TOKEN_TIME:
+            age = (datetime.now(timezone.utc) - BEARER_TOKEN_TIME).total_seconds()
+            if age < 12600:
+                return BEARER_TOKEN
+        _log("Refreshing bearer token...")
+        try:
+            auth_data = urlencode({'username': USERNAME, 'password': PASSWORD, 'token': 'true'}).encode()
+            req = Request(f"{GATEWAY_URL}/auth", data=auth_data, method='POST')
+            req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+            with _open(req, timeout=30) as resp:
+                BEARER_TOKEN = resp.read().decode().strip()
+                BEARER_TOKEN_TIME = datetime.now(timezone.utc)
+                AUTH_ERROR = None
+                return BEARER_TOKEN
+        except Exception as e:
+            AUTH_ERROR = str(e)
+            _log(f"Auth error: {e}")
+            return None
 
 
 def api_get(url, gateway=False, timeout=30):
@@ -468,6 +477,63 @@ def get_was_findings(limit=100, severity=None):
     except Exception as e:
         _log(f"TAS findings error: {e}")
         return []
+
+
+def get_pm_jobs(platform='Windows', limit=10):
+    """Get Patch Management deployment jobs"""
+    data = api_get(f"{GATEWAY_URL}/pm/v1/deploymentjobs?platform={platform}&pageSize={limit}", gateway=True)
+    try:
+        return json.loads(data) if data else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def get_pm_patches_count(platform='Windows', group_by=None):
+    """Get patch counts, optionally grouped by vendorSeverity or appFamily"""
+    url = f"{GATEWAY_URL}/pm/v1/patches/count?platform={platform}"
+    if group_by:
+        url += f"&groupBy={group_by}"
+    data = api_get(url, gateway=True)
+    try:
+        return json.loads(data) if data else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def get_pm_assets(platform='Windows', limit=10):
+    """Get Patch Management enabled assets"""
+    data = api_get(f"{GATEWAY_URL}/pm/v1/assets?platform={platform}&pageSize={limit}", gateway=True)
+    try:
+        return json.loads(data) if data else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def get_pm_job_summary(job_id):
+    """Get deployment job result summary"""
+    data = api_get(f"{GATEWAY_URL}/pm/v1/deploymentjob/{job_id}/deploymentjobresult/summary", gateway=True)
+    try:
+        return json.loads(data) if data else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def get_mtg_jobs(platform='Windows', limit=10):
+    """Get TruRisk Mitigate deployment jobs"""
+    data = api_get(f"{GATEWAY_URL}/mtg/v1/deploymentjobs?platform={platform}&pageSize={limit}", gateway=True)
+    try:
+        return json.loads(data) if data else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def get_mtg_job_detail(job_id):
+    """Get mitigation job details"""
+    data = api_get(f"{GATEWAY_URL}/mtg/v1/deploymentjob/{job_id}", gateway=True)
+    try:
+        return json.loads(data) if data else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 def get_criticality(asset):
@@ -939,7 +1005,7 @@ def _get_first_cloud_evals():
 
 @mcp.tool()
 def get_recommendations() -> dict:
-    """Security program coach - analyzes your environment and recommends Qualys modules and actions to reduce risk. Checks for gaps in container scanning, cloud posture, patch coverage, EOL systems, threat exposure, and application security. Returns prioritized recommendations."""
+    """Security program coach - analyzes your environment and recommends Qualys modules and actions to reduce risk. Checks for gaps in TruRisk Eliminate (patching + mitigation), container scanning, cloud posture, EOL systems, threat exposure, and application security. Returns prioritized recommendations with eliminate/mitigate actions."""
     result = {'recommendations': [], 'coverage': {}, 'summary': ''}
     recs = []
 
@@ -1163,6 +1229,127 @@ def get_recommendations() -> dict:
         f'{"cloud posture, " if not cloud_total else ""}'
         f'{"app scanning, " if not was else ""}'
         f'patch acceleration'
+    )
+
+    return result
+
+
+@mcp.tool()
+def get_eliminate_status() -> dict:
+    """TruRisk Eliminate status - shows patch deployment jobs (Patch), mitigation jobs (Mitigate), patch catalog coverage, and assets managed by Qualys Patch Management. Returns job status, completion rates, and patch counts by severity. Use when asked about patching progress, risk elimination, or mitigation status."""
+    result = {
+        'patchManagement': {'windows': {}, 'linux': {}},
+        'mitigations': {'windows': {}, 'linux': {}},
+        'patchCatalog': {},
+        'summary': '',
+    }
+
+    # Fetch everything concurrently
+    concurrent = _run_concurrent(
+        windows_pm_jobs=lambda: get_pm_jobs('Windows', 20),
+        linux_pm_jobs=lambda: get_pm_jobs('Linux', 20),
+        windows_mtg_jobs=lambda: get_mtg_jobs('Windows', 20),
+        linux_mtg_jobs=lambda: get_mtg_jobs('Linux', 20),
+        windows_patches=lambda: get_pm_patches_count('Windows', 'vendorSeverity'),
+        linux_patches=lambda: get_pm_patches_count('Linux'),
+        windows_assets=lambda: get_pm_assets('Windows', 5),
+        linux_assets=lambda: get_pm_assets('Linux', 5),
+    )
+
+    total_patch_jobs = 0
+    total_mtg_jobs = 0
+    active_patch_jobs = 0
+    active_mtg_jobs = 0
+
+    for platform in ['windows', 'linux']:
+        plat_key = platform.capitalize()
+
+        # Patch jobs
+        pm_jobs = concurrent.get(f'{platform}_pm_jobs') or []
+        patch_jobs = [j for j in pm_jobs if j.get('subCategory') == 'Patch']
+        total_patch_jobs += len(patch_jobs)
+
+        active = [j for j in patch_jobs if j.get('status') not in ('Disabled', 'Deleted')]
+        active_patch_jobs += len(active)
+
+        by_status = {}
+        for j in patch_jobs:
+            status = j.get('status', 'Unknown')
+            by_status[status] = by_status.get(status, 0) + 1
+
+        recent_jobs = []
+        for j in patch_jobs[:10]:
+            job_info = {
+                'name': j.get('name', ''),
+                'status': j.get('status', ''),
+                'schedule': j.get('scheduleType', ''),
+                'assets': j.get('applicableAssetCount') or j.get('assetCount') or 0,
+                'completion': j.get('completionPercent'),
+            }
+            if j.get('subCategory') == 'Patch':
+                job_info['patches'] = j.get('patchCount', 0)
+            recent_jobs.append(job_info)
+
+        pm_assets = concurrent.get(f'{platform}_assets') or []
+        result['patchManagement'][platform] = {
+            'totalJobs': len(patch_jobs),
+            'activeJobs': len(active),
+            'byStatus': by_status,
+            'recentJobs': recent_jobs,
+            'managedAssets': len(pm_assets),
+        }
+
+        # Mitigation jobs
+        mtg_jobs = concurrent.get(f'{platform}_mtg_jobs') or []
+        total_mtg_jobs += len(mtg_jobs)
+
+        mtg_active = [j for j in mtg_jobs if j.get('status') not in ('Disabled', 'Deleted')]
+        active_mtg_jobs += len(mtg_active)
+
+        mtg_by_status = {}
+        for j in mtg_jobs:
+            status = j.get('status', 'Unknown')
+            mtg_by_status[status] = mtg_by_status.get(status, 0) + 1
+
+        mtg_recent = []
+        for j in mtg_jobs[:10]:
+            mtg_recent.append({
+                'name': j.get('name', ''),
+                'status': j.get('status', ''),
+                'schedule': j.get('scheduleType', ''),
+                'assets': j.get('applicableAssetCount') or j.get('assetCount') or 0,
+                'mitigationActions': j.get('mitigationActionCount', 0),
+                'completion': j.get('completionPercent'),
+            })
+
+        result['mitigations'][platform] = {
+            'totalJobs': len(mtg_jobs),
+            'activeJobs': len(mtg_active),
+            'byStatus': mtg_by_status,
+            'recentJobs': mtg_recent,
+        }
+
+    # Patch catalog
+    win_patches = concurrent.get('windows_patches') or {}
+    linux_patches = concurrent.get('linux_patches') or {}
+    win_sev = win_patches.get('vendorSeverity', {})
+    linux_count = linux_patches.get('patches', {}).get('count', 0)
+    result['patchCatalog'] = {
+        'windows': {
+            'total': sum(win_sev.values()) if win_sev else win_patches.get('patches', {}).get('count', 0),
+            'bySeverity': win_sev,
+        },
+        'linux': {'total': linux_count},
+    }
+
+    total_catalog = result['patchCatalog']['windows']['total'] + result['patchCatalog']['linux']['total']
+
+    result['summary'] = (
+        f'TruRisk Eliminate: {total_patch_jobs} patch jobs ({active_patch_jobs} active), '
+        f'{total_mtg_jobs} mitigation jobs ({active_mtg_jobs} active). '
+        f'Patch catalog: {total_catalog:,} patches available. '
+        f'Use Patch to eliminate risk by deploying fixes. '
+        f'Use Mitigate to apply compensating controls when no patch exists.'
     )
 
     return result
