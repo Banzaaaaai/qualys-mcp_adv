@@ -737,14 +737,57 @@ def get_weekly_priorities(limit: int = 10) -> dict:
     return result
 
 
+def _extract_software_keywords(title):
+    """Extract software name keywords from KB title for CSAM software search."""
+    if not title:
+        return []
+    import re
+    keywords = []
+    # Extract parenthetical terms first (e.g., "PAN-OS" from "Palo Alto Networks (PAN-OS)")
+    parens = re.findall(r'\(([^)]+)\)', title)
+    for p in parens:
+        p = p.strip()
+        if len(p) >= 3 and not any(w in p.lower() for w in ['cve-', 'formerly', 'aka']):
+            keywords.append(p)
+    # Remove common vulnerability suffixes to isolate the product name
+    stop_words = {
+        'remote', 'code', 'execution', 'vulnerability', 'vulnerabilities',
+        'multiple', 'security', 'update', 'patch', 'advisory', 'detected',
+        'denial', 'of', 'service', 'privilege', 'escalation', 'information',
+        'disclosure', 'buffer', 'overflow', 'injection', 'cross-site',
+        'scripting', 'authentication', 'bypass', 'insecure', 'configuration',
+        'arbitrary', 'command', 'rce', 'dos', 'xss', 'sqli', 'point', 'and',
+    }
+    parts = title.split()
+    product_words = []
+    for word in parts:
+        clean = word.strip('()').lower()
+        if clean in stop_words:
+            break
+        # Skip parenthetical content in the word stream
+        if word.startswith('(') and word.endswith(')'):
+            continue
+        product_words.append(word.strip('()'))
+    # Build search terms: try full product name, then shorter versions
+    if len(product_words) >= 2:
+        full = ' '.join(product_words)
+        keywords.append(full)
+        if len(product_words) >= 3:
+            keywords.append(' '.join(product_words[-2:]))
+        if len(product_words) >= 4:
+            keywords.append(' '.join(product_words[1:3]))
+    return keywords
+
+
 @mcp.tool()
 def investigate_cve(cve: str) -> dict:
-    """Investigate if your environment is affected by a specific CVE. Returns QIDs, KB details, severity, and remediation. Fast (~5s)."""
+    """Investigate if your environment is affected by a specific CVE. Returns QIDs, KB details, severity, remediation, threat intel, and searches your asset inventory for potentially affected systems. Fast (~5s)."""
     result = {'cve': cve, 'qids': [], 'severity': 0,
               'title': '', 'patchAvailable': False, 'solution': '',
               'allKbDetails': [], 'threatIntel': [],
-              'ransomware': False,
-              'summary': {'qidCount': 0, 'patchAvailable': False}}
+              'ransomware': False, 'affectedAssets': {},
+              'summary': {'qidCount': 0, 'patchAvailable': False,
+                          'assetsWithSoftware': 0}}
 
     # Step 1: CVE -> QIDs + KB data (KB API is fast, ~3s)
     qids = get_cve_qids(cve)
@@ -756,6 +799,7 @@ def investigate_cve(cve: str) -> dict:
         kb_data = get_kb_batch(qids[:20])
         max_sev = 0
         all_threat_intel = set()
+        software_keywords = set()
         for qid in qids:
             kb = kb_data.get(qid)
             if kb:
@@ -780,9 +824,78 @@ def investigate_cve(cve: str) -> dict:
                     'threatIntel': ti,
                     'ransomware': kb.get('ransomware', False),
                 })
+                # Collect software keywords from titles
+                for kw in _extract_software_keywords(kb.get('title', '')):
+                    software_keywords.add(kw)
 
         result['threatIntel'] = sorted(all_threat_intel)
         result['allKbDetails'].sort(key=lambda x: x['severity'], reverse=True)
+
+        # Step 2: Search CSAM for assets running the affected software (~0.5s)
+        # Also detect the OS hint from KB title to filter accurately
+        title_lower = result['title'].lower()
+        os_filter = None
+        if 'windows' in title_lower or 'microsoft' in title_lower:
+            os_filter = {'field': 'operatingSystem.name', 'operator': 'CONTAINS', 'value': 'Windows'}
+        elif 'linux' in title_lower or 'ubuntu' in title_lower or 'centos' in title_lower or 'rhel' in title_lower:
+            os_filter = {'field': 'operatingSystem.name', 'operator': 'CONTAINS', 'value': 'Linux'}
+
+        if software_keywords:
+            software_searches = {}
+            for kw in list(software_keywords)[:4]:
+                filters = [{'field': 'software.name', 'operator': 'CONTAINS', 'value': kw}]
+                if os_filter:
+                    filters.append(os_filter)
+                software_searches[kw] = lambda f=filters: (
+                    csam_count(f),
+                    csam_search(f, limit=5)
+                )
+            sw_results = _run_concurrent(**software_searches)
+            best_count = 0
+            best_keyword = ''
+            best_assets = []
+            for kw, val in sw_results.items():
+                if val and isinstance(val, tuple):
+                    count, assets = val
+                    if count and count > best_count:
+                        best_count = count
+                        best_keyword = kw
+                        best_assets = assets or []
+
+            # If no software match found but we know the OS, count assets on that OS
+            if best_count == 0 and os_filter:
+                os_count = csam_count([os_filter])
+                os_assets = csam_search([os_filter], limit=5)
+                result['affectedAssets'] = {
+                    'searchedSoftware': ', '.join(list(software_keywords)[:2]),
+                    'assetCount': 0,
+                    'osExposure': {
+                        'os': os_filter['value'],
+                        'totalAssets': os_count,
+                    },
+                    'sampleAssets': [{
+                        'assetId': str(a.get('assetId', '')),
+                        'name': a.get('assetName', ''),
+                        'riskScore': a.get('riskScore', 0),
+                        'os': (a.get('operatingSystem') or {}).get('osName', ''),
+                    } for a in (os_assets or [])[:5]],
+                    'note': f'No specific software match but {os_count} {os_filter["value"]} assets could be affected. Use get_asset_risk(assetId) to confirm.',
+                }
+                result['summary']['assetsWithSoftware'] = 0
+                result['summary']['osExposedAssets'] = os_count
+            else:
+                result['affectedAssets'] = {
+                    'searchedSoftware': best_keyword,
+                    'assetCount': best_count,
+                    'sampleAssets': [{
+                        'assetId': str(a.get('assetId', '')),
+                        'name': a.get('assetName', ''),
+                        'riskScore': a.get('riskScore', 0),
+                        'os': (a.get('operatingSystem') or {}).get('osName', ''),
+                    } for a in best_assets[:5]],
+                    'note': 'Assets running the affected software (potential exposure). Use get_asset_risk(assetId) for confirmed vulnerability details.',
+                }
+                result['summary']['assetsWithSoftware'] = best_count
 
     return result
 
