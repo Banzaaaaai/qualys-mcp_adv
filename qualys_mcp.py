@@ -1693,7 +1693,7 @@ def get_etm_findings(qql: str = "", report_id: str = "") -> dict:
         if detail['status'] == 'COMPLETED':
             resources = detail.get('resources', [])
             all_findings = []
-            for res_name in resources[:3]:  # Cap at 3 resource files
+            for res_name in resources[:5]:  # Cap at 5 resource files
                 findings = etm_download(detail['id'], res_name)
                 if findings:
                     all_findings.extend(findings)
@@ -1721,7 +1721,7 @@ def get_etm_findings(qql: str = "", report_id: str = "") -> dict:
             detail = etm_api('GET', f'/etm/api/rest/v1/reports/{target["id"]}')
             if detail and detail.get('resources'):
                 all_findings = []
-                for res_name in detail['resources'][:3]:
+                for res_name in detail['resources'][:5]:
                     findings = etm_download(detail['id'], res_name)
                     if findings:
                         all_findings.extend(findings)
@@ -1758,16 +1758,24 @@ def _format_etm_findings(all_findings, report_detail):
     by_severity = {}
     by_status = {}
     by_cve = {}
+    by_category = {}
+    by_source = {}
+    by_misconfig_type = {}
     assets_seen = set()
     patchable = 0
-    total_trurisk = 0
 
-    formatted = []
+    vulns = []
+    misconfigs = []
     for f in all_findings:
         sev = f.get('severity', 0)
         by_severity[sev] = by_severity.get(sev, 0) + 1
         status = f.get('status', 'Unknown')
         by_status[status] = by_status.get(status, 0) + 1
+
+        category = f.get('category', 'VULNERABILITY')
+        by_category[category] = by_category.get(category, 0) + 1
+        source = f.get('vendorProductName', 'Unknown')
+        by_source[source] = by_source.get(source, 0) + 1
 
         cve = f.get('cveId', '')
         if cve:
@@ -1784,15 +1792,12 @@ def _format_etm_findings(all_findings, report_detail):
             patchable += 1
 
         trurisk = f.get('truRiskScore') or 0
-        total_trurisk += trurisk
-
-        # vendorId is the QID in Qualys VMDR findings
         qid = f.get('vendorId', '')
         qds = f.get('qds', 0)
         qvss_raw = f.get('qvss')
         qvss = qvss_raw if isinstance(qvss_raw, (int, float)) else (qvss_raw.get('score') or qvss_raw.get('base') if isinstance(qvss_raw, dict) else None)
 
-        formatted.append({
+        entry = {
             'cveId': cve,
             'qid': qid,
             'title': f.get('title', ''),
@@ -1801,18 +1806,31 @@ def _format_etm_findings(all_findings, report_detail):
             'qvss': qvss,
             'truRiskScore': trurisk,
             'status': status,
+            'category': category,
             'assetName': asset_name,
             'assetId': asset.get('internalAssetId', ''),
             'isPatchAvailable': f.get('isPatchAvailable', False),
             'isQualysPatchable': f.get('isQualysPatchable', False),
             'cvss': f.get('cvss', {}),
-            'source': f.get('vendorProductName', ''),
+            'source': source,
             'firstFound': f.get('firstFound'),
             'lastFound': f.get('lastFound'),
-        })
+        }
 
-    # Sort by severity desc, then TruRisk desc
-    formatted.sort(key=lambda x: (-x['severity'], -(x['truRiskScore'] or 0)))
+        if category == 'MISCONFIGURATION':
+            sub = f.get('subCategory', '')
+            entry['subCategory'] = sub
+            by_misconfig_type[sub] = by_misconfig_type.get(sub, 0) + 1
+            misconfigs.append(entry)
+        else:
+            vulns.append(entry)
+
+    # Sort vulns and misconfigs separately by severity/TruRisk
+    vulns.sort(key=lambda x: (-x['severity'], -(x['truRiskScore'] or 0)))
+    misconfigs.sort(key=lambda x: (-x['severity'], -(x['truRiskScore'] or 0)))
+
+    # Include top vulns + top misconfigs (ensure both are represented)
+    findings = vulns[:150] + misconfigs[:50]
 
     # Top CVEs by affected asset count
     top_cves = sorted(by_cve.items(), key=lambda x: (-x[1]['count'], -x[1]['severity']))[:20]
@@ -1821,7 +1839,7 @@ def _format_etm_findings(all_findings, report_detail):
         'reportStatus': 'COMPLETED',
         'reportId': report_detail.get('id', ''),
         'reportName': report_detail.get('name', ''),
-        'findings': formatted[:200],  # Cap at 200 findings
+        'findings': findings,
         'totalFindings': len(all_findings),
         'summary': {
             'totalFindings': len(all_findings),
@@ -1830,9 +1848,26 @@ def _format_etm_findings(all_findings, report_detail):
             'patchable': patchable,
             'bySeverity': {f'sev{k}': v for k, v in sorted(by_severity.items(), reverse=True)},
             'byStatus': by_status,
+            'byCategory': by_category,
+            'bySource': by_source,
         },
         'topCVEs': [{'cve': cve, 'qid': info.get('qid', ''), 'affectedAssets': info['count'], 'severity': info['severity'], 'title': info['title'][:80]} for cve, info in top_cves],
     }
+
+    # Add misconfiguration breakdown if any exist
+    if misconfigs:
+        result['misconfigurations'] = {
+            'total': len(misconfigs),
+            'byType': by_misconfig_type,
+            'topFindings': [{
+                'title': m['title'][:80],
+                'assetName': m['assetName'],
+                'severity': m['severity'],
+                'truRiskScore': m['truRiskScore'],
+                'subCategory': m.get('subCategory', ''),
+            } for m in misconfigs[:10]],
+        }
+
     return result
 
 
