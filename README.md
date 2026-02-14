@@ -1,6 +1,6 @@
 # Qualys MCP Server
 
-A lightweight MCP server that connects AI assistants to Qualys security data. **15 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
+A lightweight MCP server that connects AI assistants to Qualys security data. **17 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
 
 ## Setup
 
@@ -38,7 +38,7 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 
 ## Tools
 
-15 tools covering vulnerability management, threat intelligence, asset risk, cloud security, containers, TruRisk Eliminate, and security program coaching.
+17 tools covering vulnerability management, threat intelligence, asset risk, cloud security, containers, TruRisk Eliminate, ETM findings, and security program coaching.
 
 ### Daily Operations & Coaching
 
@@ -47,6 +47,8 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 | `get_morning_report` | What happened overnight? New vulns, ransomware/exploit flags, top risks, action items |
 | `get_recommendations` | What should we improve? Module gaps, risk reduction opportunities, prioritized next steps |
 | `get_eliminate_status` | What's our patching and mitigation status? Patch jobs, mitigation jobs, catalog coverage |
+| `get_etm_findings` | What confirmed vulnerabilities exist across all sources? ETM findings with QID, QDS, TruRisk, CVE, patch status |
+| `get_scanner_health` | Are our scanners healthy? Appliance status, failed scans, capacity utilization, signature updates |
 
 ### Security Posture & Priorities
 
@@ -97,6 +99,9 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 "What's our cloud posture?"                    → get_cloud_risk()
 "What modules should we add?"                  → get_recommendations()
 "What's our patch/mitigate status?"            → get_eliminate_status()
+"Show me all confirmed critical findings"      → get_etm_findings(qql="vulnerabilities.vulnerability.severity:5")
+"Am I affected by Log4Shell across all sources?"→ get_etm_findings(qql="vulnerabilities.vulnerability.cveIds:CVE-2021-44228")
+"Are our scanners healthy?"                    → get_scanner_health()
 ```
 
 ## Qualys PODs

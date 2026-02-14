@@ -536,6 +536,95 @@ def get_mtg_job_detail(job_id):
         return {}
 
 
+def etm_api(method, path, body=None, timeout=60):
+    """Call ETM API. Returns parsed JSON or None on error."""
+    token = get_bearer_token()
+    url = f"{GATEWAY_URL}{path}"
+    data = json.dumps(body).encode() if body else None
+    req = Request(url, data=data, method=method)
+    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('Accept', 'application/json')
+    req.add_header('X-Requested-With', 'qualys-mcp')
+    try:
+        with _open(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        _log(f"ETM API error: {e}")
+        return None
+
+
+def etm_download(report_id, resource_name, timeout=60):
+    """Download ETM report resource as parsed JSON list."""
+    token = get_bearer_token()
+    url = f"{GATEWAY_URL}/etm/api/rest/v1/reports/{report_id}/resources/{resource_name}"
+    req = Request(url, method='GET')
+    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
+    req.add_header('Accept', 'application/json')
+    req.add_header('X-Requested-With', 'qualys-mcp')
+    try:
+        with _open(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        _log(f"ETM download error: {e}")
+        return []
+
+
+def get_scanner_list():
+    """Get scanner appliance list with status and health metrics."""
+    data = api_get(f"{BASE_URL}/api/2.0/fo/appliance/?action=list&output_mode=full", timeout=30)
+    if not data:
+        return []
+    scanners = []
+    try:
+        root = ET.fromstring(data)
+        for s in root.findall('.//APPLIANCE'):
+            scanners.append({
+                'id': s.findtext('ID', ''),
+                'name': s.findtext('NAME', ''),
+                'status': s.findtext('STATUS', ''),
+                'type': s.findtext('TYPE', ''),
+                'model': s.findtext('MODEL_NUMBER', ''),
+                'runningScanCount': int(s.findtext('RUNNING_SCAN_COUNT', '0')),
+                'runningSlices': int(s.findtext('RUNNING_SLICES_COUNT', '0')),
+                'maxCapacity': int(s.findtext('MAX_CAPACITY_UNITS', '0')),
+                'heartbeatsMissed': int(s.findtext('HEARTBEATS_MISSED', '0')),
+                'softwareVersion': s.findtext('SOFTWARE_VERSION', ''),
+                'vulnsigsVersion': s.findtext('VULNSIGS_VERSION', ''),
+                'vulnsigsLatest': s.findtext('VULNSIGS_LATEST', ''),
+                'lastUpdated': s.findtext('LAST_UPDATED_DATE', ''),
+                'ssConnection': s.findtext('SS_CONNECTION', ''),
+                'ssLastConnected': s.findtext('SS_LAST_CONNECTED', ''),
+            })
+    except ET.ParseError:
+        pass
+    return scanners
+
+
+def get_scan_list(states='Running,Paused,Queued,Error,Finished', limit=100):
+    """Get scan list filtered by state."""
+    data = api_get(f"{BASE_URL}/api/2.0/fo/scan/?action=list&state={states}&show_status=1", timeout=30)
+    if not data:
+        return []
+    scans = []
+    try:
+        root = ET.fromstring(data)
+        for s in root.findall('.//SCAN')[:limit]:
+            scans.append({
+                'ref': s.findtext('REF', ''),
+                'title': s.findtext('TITLE', ''),
+                'state': s.findtext('STATUS/STATE', ''),
+                'type': s.findtext('TYPE', ''),
+                'target': s.findtext('TARGET', '')[:200] if s.findtext('TARGET', '') else '',
+                'launched': s.findtext('LAUNCH_DATETIME', ''),
+                'duration': s.findtext('DURATION', ''),
+                'scannerName': s.findtext('SCANNER_APPLIANCE/FRIENDLY_NAME', ''),
+            })
+    except ET.ParseError:
+        pass
+    return scans
+
+
 def get_criticality(asset):
     """Extract criticality score from asset"""
     crit = asset.get('criticality')
@@ -1465,6 +1554,285 @@ def get_eliminate_status() -> dict:
         f'Use Mitigate to apply compensating controls when no patch exists.'
     )
 
+    return result
+
+
+@mcp.tool()
+def get_scanner_health() -> dict:
+    """Scanner infrastructure health - shows scanner appliance status, running/failed scans, capacity utilization, and signature update status. Use when asked about scan failures, scanner health, or scanning infrastructure. Fast (~5s)."""
+    result = {
+        'scanners': [],
+        'scanStatus': {},
+        'summary': '',
+    }
+
+    # Fetch scanner list and active/error scans concurrently
+    concurrent = _run_concurrent(
+        scanners=lambda: get_scanner_list(),
+        active_scans=lambda: get_scan_list('Running,Paused,Queued', 100),
+        error_scans=lambda: get_scan_list('Error', 50),
+    )
+
+    scanners = concurrent.get('scanners') or []
+    active_scans = concurrent.get('active_scans') or []
+    error_scans = concurrent.get('error_scans') or []
+
+    # Scanner status
+    online = 0
+    offline = 0
+    outdated_sigs = 0
+    total_capacity = 0
+    total_running = 0
+
+    for s in scanners:
+        status = s.get('status', '').lower()
+        if status == 'online':
+            online += 1
+        else:
+            offline += 1
+
+        running = s.get('runningScanCount', 0)
+        capacity = s.get('maxCapacity', 0)
+        total_running += running
+        total_capacity += capacity
+
+        # Check if vulnsigs are outdated
+        sigs_outdated = (s.get('vulnsigsVersion', '') != s.get('vulnsigsLatest', '') and s.get('vulnsigsLatest', ''))
+
+        if sigs_outdated:
+            outdated_sigs += 1
+
+        scanner_info = {
+            'name': s.get('name', ''),
+            'status': s.get('status', ''),
+            'runningScanCount': running,
+            'maxCapacity': capacity,
+            'heartbeatsMissed': s.get('heartbeatsMissed', 0),
+            'lastUpdated': s.get('lastUpdated', ''),
+        }
+        if sigs_outdated:
+            scanner_info['vulnsigsOutdated'] = True
+            scanner_info['vulnsigsVersion'] = s.get('vulnsigsVersion', '')
+            scanner_info['vulnsigsLatest'] = s.get('vulnsigsLatest', '')
+        result['scanners'].append(scanner_info)
+
+    # Sort: online first, then by running scan count desc
+    result['scanners'].sort(key=lambda x: (x['status'] != 'Online', -x['runningScanCount']))
+
+    # Scan status summary
+    scan_states = {}
+    for s in active_scans + error_scans:
+        state = s.get('state', 'Unknown')
+        scan_states[state] = scan_states.get(state, 0) + 1
+
+    result['scanStatus'] = {
+        'byState': scan_states,
+        'errorScans': [{
+            'title': s.get('title', ''),
+            'launched': s.get('launched', ''),
+            'scanner': s.get('scannerName', ''),
+        } for s in error_scans[:10]],
+        'activeScans': [{
+            'title': s.get('title', ''),
+            'state': s.get('state', ''),
+            'scanner': s.get('scannerName', ''),
+        } for s in active_scans[:10]],
+    }
+
+    # Utilization
+    utilization = round(total_running / total_capacity * 100, 1) if total_capacity > 0 else 0
+
+    error_count = scan_states.get('Error', 0)
+    running_count = scan_states.get('Running', 0)
+    queued_count = scan_states.get('Queued', 0)
+
+    warnings = []
+    if offline > 0:
+        warnings.append(f'{offline} scanner(s) offline')
+    if outdated_sigs > 0:
+        warnings.append(f'{outdated_sigs} scanner(s) with outdated vulnerability signatures')
+    if error_count > 10:
+        warnings.append(f'{error_count} failed scans')
+    if utilization > 80:
+        warnings.append(f'scanner utilization at {utilization}%')
+
+    result['summary'] = (
+        f'{online} scanner(s) online, {offline} offline. '
+        f'{running_count} scans running, {queued_count} queued, {error_count} errors. '
+        f'Capacity utilization: {utilization}%. '
+        + (f'Warnings: {"; ".join(warnings)}.' if warnings else 'No warnings.')
+    )
+
+    return result
+
+
+@mcp.tool()
+def get_etm_findings(qql: str = "", report_id: str = "") -> dict:
+    """Query ETM (Enterprise TruRisk Management) for confirmed vulnerability findings across all sources (VMDR, TotalCloud, third-party scanners). Returns per-asset findings with TruRisk scores, QDS, CVSS, patch status, and remediation details.
+
+    Use qql to filter findings with Qualys Query Language. Examples:
+      - 'vulnerabilities.vulnerability.cveIds:CVE-2021-44228' — find Log4Shell findings
+      - 'vulnerabilities.vulnerability.severity:5' — critical findings only
+      - 'asset.name:web-server' — findings for specific asset
+      - 'vulnerabilities.vulnerability.isPatchAvailable:true' — patchable findings
+
+    ETM reports are generated asynchronously. If a matching completed report exists, findings are returned immediately (~1-2s). Otherwise a new report is requested and its ID returned — call again with that report_id to check status and retrieve results.
+
+    This is the most comprehensive view of confirmed vulnerabilities in your environment."""
+    result = {'findings': [], 'summary': {}, 'reportStatus': ''}
+
+    # If report_id provided, check its status and download if ready
+    if report_id:
+        detail = etm_api('GET', f'/etm/api/rest/v1/reports/{report_id}')
+        if not detail:
+            result['reportStatus'] = 'error'
+            result['summary'] = {'error': 'Could not retrieve report status'}
+            return result
+
+        result['reportStatus'] = detail.get('status', 'UNKNOWN')
+        if detail['status'] == 'COMPLETED':
+            resources = detail.get('resources', [])
+            all_findings = []
+            for res_name in resources[:3]:  # Cap at 3 resource files
+                findings = etm_download(detail['id'], res_name)
+                if findings:
+                    all_findings.extend(findings)
+
+            return _format_etm_findings(all_findings, detail)
+
+        elif detail['status'] == 'FAILED':
+            result['summary'] = {'error': 'Report generation failed', 'reportId': report_id}
+            return result
+        else:
+            result['summary'] = {
+                'message': f'Report is still processing (status: {detail["status"]}). Try again in 30-60 seconds.',
+                'reportId': report_id,
+            }
+            return result
+
+    # No report_id — check for a recent completed report matching the query
+    reports = etm_api('POST', '/etm/api/rest/v1/reports/list', {'pageSize': 50})
+    if reports:
+        # Look for a recent completed JSON report (prefer matching name/filter)
+        completed = [r for r in reports if r.get('status') == 'COMPLETED' and r.get('reportFormat') == 'JSON']
+        # If no specific QQL, use the most recent completed report
+        if not qql and completed:
+            target = completed[0]
+            detail = etm_api('GET', f'/etm/api/rest/v1/reports/{target["id"]}')
+            if detail and detail.get('resources'):
+                all_findings = []
+                for res_name in detail['resources'][:3]:
+                    findings = etm_download(detail['id'], res_name)
+                    if findings:
+                        all_findings.extend(findings)
+                if all_findings:
+                    return _format_etm_findings(all_findings, detail)
+
+    # Create a new report
+    body = {
+        'reportName': f'mcp-{int(datetime.now(timezone.utc).timestamp())}',
+        'reportFormat': 'JSON',
+    }
+    if qql:
+        body['findingFilter'] = {'qql': qql}
+
+    new_report = etm_api('POST', '/etm/api/rest/v1/reports/findings', body)
+    if not new_report:
+        result['reportStatus'] = 'error'
+        result['summary'] = {'error': 'Failed to create ETM report. ETM module may not be enabled.'}
+        return result
+
+    rid = new_report.get('id', '')
+    result['reportStatus'] = 'REQUESTED'
+    result['summary'] = {
+        'message': 'ETM report requested. Reports typically take 1-5 minutes to generate. Call get_etm_findings(report_id="' + rid + '") to check status and retrieve results.',
+        'reportId': rid,
+        'qql': qql or '(all findings)',
+    }
+    return result
+
+
+def _format_etm_findings(all_findings, report_detail):
+    """Format ETM findings into a structured response."""
+    # Aggregate stats
+    by_severity = {}
+    by_status = {}
+    by_cve = {}
+    assets_seen = set()
+    patchable = 0
+    total_trurisk = 0
+
+    formatted = []
+    for f in all_findings:
+        sev = f.get('severity', 0)
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+        status = f.get('status', 'Unknown')
+        by_status[status] = by_status.get(status, 0) + 1
+
+        cve = f.get('cveId', '')
+        if cve:
+            if cve not in by_cve:
+                by_cve[cve] = {'count': 0, 'severity': sev, 'title': f.get('title', ''), 'qid': f.get('vendorId', '')}
+            by_cve[cve]['count'] += 1
+
+        asset = f.get('asset', {})
+        asset_name = asset.get('assetName', '') or f.get('assetName', '')
+        if asset_name:
+            assets_seen.add(asset_name)
+
+        if f.get('isPatchAvailable'):
+            patchable += 1
+
+        trurisk = f.get('truRiskScore') or 0
+        total_trurisk += trurisk
+
+        # vendorId is the QID in Qualys VMDR findings
+        qid = f.get('vendorId', '')
+        qds = f.get('qds', 0)
+        qvss_raw = f.get('qvss')
+        qvss = qvss_raw if isinstance(qvss_raw, (int, float)) else (qvss_raw.get('score') or qvss_raw.get('base') if isinstance(qvss_raw, dict) else None)
+
+        formatted.append({
+            'cveId': cve,
+            'qid': qid,
+            'title': f.get('title', ''),
+            'severity': sev,
+            'qds': qds,
+            'qvss': qvss,
+            'truRiskScore': trurisk,
+            'status': status,
+            'assetName': asset_name,
+            'assetId': asset.get('internalAssetId', ''),
+            'isPatchAvailable': f.get('isPatchAvailable', False),
+            'isQualysPatchable': f.get('isQualysPatchable', False),
+            'cvss': f.get('cvss', {}),
+            'source': f.get('vendorProductName', ''),
+            'firstFound': f.get('firstFound'),
+            'lastFound': f.get('lastFound'),
+        })
+
+    # Sort by severity desc, then TruRisk desc
+    formatted.sort(key=lambda x: (-x['severity'], -(x['truRiskScore'] or 0)))
+
+    # Top CVEs by affected asset count
+    top_cves = sorted(by_cve.items(), key=lambda x: (-x[1]['count'], -x[1]['severity']))[:20]
+
+    result = {
+        'reportStatus': 'COMPLETED',
+        'reportId': report_detail.get('id', ''),
+        'reportName': report_detail.get('name', ''),
+        'findings': formatted[:200],  # Cap at 200 findings
+        'totalFindings': len(all_findings),
+        'summary': {
+            'totalFindings': len(all_findings),
+            'uniqueAssets': len(assets_seen),
+            'uniqueCVEs': len(by_cve),
+            'patchable': patchable,
+            'bySeverity': {f'sev{k}': v for k, v in sorted(by_severity.items(), reverse=True)},
+            'byStatus': by_status,
+        },
+        'topCVEs': [{'cve': cve, 'qid': info.get('qid', ''), 'affectedAssets': info['count'], 'severity': info['severity'], 'title': info['title'][:80]} for cve, info in top_cves],
+    }
     return result
 
 
