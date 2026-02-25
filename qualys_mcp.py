@@ -2250,6 +2250,52 @@ def get_cve_details(cves: str) -> dict:
     return result
 
 
+@mcp.tool()
+def get_qid_details(qids: str) -> dict:
+    """[Vulnerability Intelligence] Direct QID lookup — get KB details (severity, QDS, patches, threat intel, CVEs) for specific Qualys QIDs. Accepts comma-separated QIDs (e.g. '38747,376418'). Up to 50 QIDs per call. Fast (~3s)."""
+    qid_list = []
+    for q in qids.split(','):
+        q = q.strip()
+        if q.isdigit():
+            qid_list.append(int(q))
+    if not qid_list:
+        return {'error': 'No valid QIDs provided', 'requested': 0, 'found': 0, 'qids': []}
+
+    result = {'requested': len(qid_list), 'found': 0, 'qids': []}
+
+    # Fetch KB data and real QDS scores in parallel
+    concurrent = _run_concurrent(
+        kb=lambda: get_kb_batch(qid_list[:50]),
+        qds=lambda: get_qds_for_qids(qid_list[:50]),
+    )
+    kb_data = concurrent.get('kb') or {}
+    qds_scores = concurrent.get('qds') or {}
+
+    for qid in qid_list[:50]:
+        kb = kb_data.get(qid)
+        if kb:
+            real_qds = qds_scores.get(qid, 0)
+            result['found'] += 1
+            result['qids'].append({
+                'qid': qid,
+                'title': kb.get('title', ''),
+                'severity': kb.get('severity', 0),
+                'qds': real_qds or kb.get('qds', 0),
+                'qds_factors': kb.get('qds_factors', ''),
+                'cves': kb.get('cves', [])[:10],
+                'patchAvailable': kb.get('patch_available', False),
+                'solution': kb.get('solution', '')[:500],
+                'diagnosis': kb.get('diagnosis', '')[:300],
+                'threatIntel': kb.get('threat_intel', []),
+                'ransomware': kb.get('ransomware', False),
+            })
+        else:
+            result['qids'].append({'qid': qid, 'found': False})
+
+    result['qids'].sort(key=lambda x: (-x.get('severity', 0), -x.get('qds', 0)))
+    return result
+
+
 def get_compliance_gaps(limit: int = 20) -> dict:
     """Get top failing compliance controls that could fail audits."""
     result = {'passRate': 0, 'failingControls': 0, 'topFailing': []}
