@@ -34,6 +34,8 @@ BEARER_TOKEN_TIME = None
 KB_CACHE = {}
 DETECTION_CACHE = {}
 DETECTION_CACHE_TIME = None
+QDS_CACHE = {}
+QDS_CACHE_TIME = None
 
 AUTH_ERROR = None
 AUTH_LOCK = Lock()
@@ -198,6 +200,66 @@ def get_host_detections(host_id, severity=4, days=30):
     except ET.ParseError:
         pass
     return dets
+
+
+def get_qds_for_qids(qids):
+    """Fetch real QDS scores from the detection API for a list of QIDs.
+    Returns {qid: max_qds} across all hosts/detections. Uses 5-minute cache.
+    Gracefully returns {} on failure so callers can fall back to QDS=0."""
+    global QDS_CACHE, QDS_CACHE_TIME
+    if not qids:
+        return {}
+
+    now = datetime.now(timezone.utc)
+    # Expire cache after 5 minutes
+    if QDS_CACHE_TIME and (now - QDS_CACHE_TIME).total_seconds() > 300:
+        QDS_CACHE = {}
+        QDS_CACHE_TIME = None
+
+    # Skip QIDs already cached
+    uncached = [q for q in qids if q not in QDS_CACHE]
+    if not uncached:
+        return {q: QDS_CACHE.get(q, 0) for q in qids}
+
+    # Batch into groups of 50 (URL length limits)
+    for i in range(0, len(uncached), 50):
+        batch = uncached[i:i+50]
+        qid_str = ','.join(map(str, batch))
+        try:
+            data = api_get(
+                f"{BASE_URL}/api/2.0/fo/asset/host/vm/detection/?action=list"
+                f"&qids={qid_str}&show_qds=1&status=Active"
+                f"&truncation_limit=500&filter_superseded_qids=1",
+                timeout=60
+            )
+            if not data:
+                _log(f"QDS fetch returned no data for {len(batch)} QIDs")
+                continue
+            root = ET.fromstring(data)
+            # Track max QDS per QID across all hosts
+            batch_qds = {}
+            for host in root.findall('.//HOST'):
+                for d in host.findall('.//DETECTION'):
+                    qid = int(d.findtext('QID', '0'))
+                    qds_el = d.find('QDS')
+                    if qds_el is not None and qds_el.text:
+                        try:
+                            qds = int(qds_el.text)
+                            if qds > batch_qds.get(qid, 0):
+                                batch_qds[qid] = qds
+                        except ValueError:
+                            pass
+            for qid, qds in batch_qds.items():
+                QDS_CACHE[qid] = qds
+            # Mark QIDs with no detections as 0 so we don't re-fetch
+            for q in batch:
+                if q not in QDS_CACHE:
+                    QDS_CACHE[q] = 0
+            QDS_CACHE_TIME = now
+        except Exception as e:
+            _log(f"QDS fetch failed for batch: {e}")
+
+    return {q: QDS_CACHE.get(q, 0) for q in qids}
 
 
 def parse_vuln_xml(v):
@@ -903,19 +965,26 @@ def investigate_cve(cve: str) -> dict:
     result['summary']['qidCount'] = len(qids)
 
     if qids:
-        # Get KB details for all related QIDs
-        kb_data = get_kb_batch(qids[:20])
+        # Get KB details and real QDS scores in parallel
+        concurrent = _run_concurrent(
+            kb=lambda: get_kb_batch(qids[:20]),
+            qds=lambda: get_qds_for_qids(qids[:20]),
+        )
+        kb_data = concurrent.get('kb') or {}
+        qds_scores = concurrent.get('qds') or {}
+
         max_sev = 0
         all_threat_intel = set()
         software_keywords = set()
         for qid in qids:
             kb = kb_data.get(qid)
             if kb:
+                real_qds = qds_scores.get(qid, 0)
                 if kb.get('severity', 0) > max_sev:
                     max_sev = kb['severity']
                     result['title'] = kb.get('title', '')
                     result['severity'] = kb['severity']
-                    result['qds'] = kb.get('qds', 0)
+                    result['qds'] = real_qds or kb.get('qds', 0)
                     result['qds_factors'] = kb.get('qds_factors', '')
                     result['patchAvailable'] = kb.get('patch_available', False)
                     result['solution'] = kb.get('solution', '')[:500]
@@ -929,7 +998,7 @@ def investigate_cve(cve: str) -> dict:
                     'qid': qid,
                     'title': kb.get('title', ''),
                     'severity': kb.get('severity', 0),
-                    'qds': kb.get('qds', 0),
+                    'qds': real_qds or kb.get('qds', 0),
                     'patchAvailable': kb.get('patch_available', False),
                     'cves': kb.get('cves', [])[:5],
                     'threatIntel': ti,
@@ -1196,12 +1265,18 @@ def get_threat_intel(threat_type: str = "", days: int = 30) -> dict:
 
     # Sort by severity desc, return top entries
     matching.sort(key=lambda x: (-x['severity'], -len(x.get('threat_intel', []))))
+
+    # Enrich top 20 results with real QDS scores from detection API
+    top_qids = [v['qid'] for v in matching[:20] if v.get('qid')]
+    qds_scores = get_qds_for_qids(top_qids) if top_qids else {}
+
     for v in matching[:50]:
+        real_qds = qds_scores.get(v['qid'], 0)
         result['matchingVulns'].append({
             'qid': v['qid'],
             'title': v['title'],
             'severity': v['severity'],
-            'qds': v.get('qds', 0),
+            'qds': real_qds or v.get('qds', 0),
             'cves': v.get('cves', [])[:5],
             'patchAvailable': v.get('patch_available', False),
             'threatIntel': v.get('threat_intel', []),
@@ -2015,12 +2090,18 @@ def get_new_vulns(days: int = 7) -> dict:
 
     # Sort by severity desc, then by threat intel count
     all_vulns.sort(key=lambda x: (-x['severity'], -len(x.get('threat_intel', []))))
+
+    # Enrich top 20 results with real QDS scores from detection API
+    top_qids = [v['qid'] for v in all_vulns[:20] if v.get('qid')]
+    qds_scores = get_qds_for_qids(top_qids) if top_qids else {}
+
     for v in all_vulns[:100]:
+        real_qds = qds_scores.get(v['qid'], 0)
         result['vulns'].append({
             'qid': v['qid'],
             'title': v['title'],
             'severity': v['severity'],
-            'qds': v.get('qds', 0),
+            'qds': real_qds or v.get('qds', 0),
             'cves': v.get('cves', [])[:5],
             'patchAvailable': v.get('patch_available', False),
             'threatIntel': v.get('threat_intel', []),
@@ -2080,12 +2161,18 @@ def get_vulns_by_software(software: str) -> dict:
             result['withPatch'] += 1
 
     matching.sort(key=lambda x: (-x['severity'], -len(x.get('threat_intel', []))))
+
+    # Enrich top 20 results with real QDS scores from detection API
+    top_qids = [v['qid'] for v in matching[:20] if v.get('qid')]
+    qds_scores = get_qds_for_qids(top_qids) if top_qids else {}
+
     for v in matching[:100]:
+        real_qds = qds_scores.get(v['qid'], 0)
         result['vulns'].append({
             'qid': v['qid'],
             'title': v['title'],
             'severity': v['severity'],
-            'qds': v.get('qds', 0),
+            'qds': real_qds or v.get('qds', 0),
             'cves': v.get('cves', [])[:5],
             'patchAvailable': v.get('patch_available', False),
             'threatIntel': v.get('threat_intel', []),
@@ -2106,17 +2193,22 @@ def get_cve_details(cves: str) -> dict:
         if not qids:
             return {'cve': cve, 'found': False}
         kb_data = get_kb_batch(qids[:20])
+        # Fetch real QDS scores from detection API
+        qds_scores = get_qds_for_qids(qids[:20])
         max_sev = 0
         best = None
+        best_qid = None
         all_threat_intel = set()
         is_ransomware = False
         all_kb = []
         for qid in qids:
             kb = kb_data.get(qid)
             if kb:
+                real_qds = qds_scores.get(qid, 0)
                 if kb.get('severity', 0) > max_sev:
                     max_sev = kb['severity']
                     best = kb
+                    best_qid = qid
                 all_threat_intel.update(kb.get('threat_intel', []))
                 if kb.get('ransomware'):
                     is_ransomware = True
@@ -2124,13 +2216,14 @@ def get_cve_details(cves: str) -> dict:
                     'qid': qid,
                     'title': kb.get('title', ''),
                     'severity': kb.get('severity', 0),
-                    'qds': kb.get('qds', 0),
+                    'qds': real_qds or kb.get('qds', 0),
                     'patchAvailable': kb.get('patch_available', False),
                 })
+        best_qds = qds_scores.get(best_qid, 0) if best_qid else 0
         entry = {
             'cve': cve, 'found': True, 'qids': qids,
             'severity': max_sev,
-            'qds': best.get('qds', 0) if best else 0,
+            'qds': best_qds or (best.get('qds', 0) if best else 0),
             'qds_factors': best.get('qds_factors', '') if best else '',
             'title': best.get('title', '') if best else '',
             'patchAvailable': best.get('patch_available', False) if best else False,
