@@ -85,24 +85,71 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 
 ## Example Conversations
 
+### Daily Operations
 ```
 "What happened overnight?"                     → get_morning_report()
-"What new vulns came out this week?"           → get_new_vulns(days=7)
-"Show me Apache vulnerabilities"               → get_vulns_by_software("Apache")
-"Are we affected by Log4Shell?"                → investigate_cve("CVE-2021-44228")
-"Compare CVE-2024-3400 and CVE-2023-4966"      → get_cve_details("CVE-2024-3400,CVE-2023-4966")
-"What vulns have active ransomware?"           → get_threat_intel(threat_type="Ransomware")
-"What should we patch first?"                  → get_weekly_priorities()
+"What should my team focus on this week?"      → get_weekly_priorities()
 "How secure are we?"                           → get_security_posture()
+"What new vulns came out this week?"           → get_new_vulns(days=7)
+"What modules should we add?"                  → get_recommendations()
+```
+
+### CVE Investigation
+```
+"Are we affected by Log4Shell?"                → investigate_cve("CVE-2021-44228")
+"Show me everything about CVE-2024-3400"       → investigate_cve("CVE-2024-3400")
+"Compare CVE-2024-3400 and CVE-2023-4966"      → get_cve_details("CVE-2024-3400,CVE-2023-4966")
+```
+
+### Threat Intelligence
+```
+"What vulns have active ransomware?"           → get_threat_intel(threat_type="Ransomware")
+"Show me vulns with public exploits"           → get_threat_intel(threat_type="Exploit_Public")
+"Which CISA KEV vulns are we exposed to?"      → get_threat_intel(threat_type="Cisa_Known_Exploited_Vulns")
+```
+
+### Software Vulnerabilities
+```
+"Show me Apache vulnerabilities"               → get_vulns_by_software("Apache")
+"Are we running vulnerable Log4j?"            → get_vulns_by_software("log4j")
+"What OpenSSL vulnerabilities do we have?"    → get_vulns_by_software("OpenSSL")
+```
+
+### Asset & Patching
+```
+"What should we patch first?"                  → get_patch_status()
 "What's wrong with asset 233946644?"           → get_asset_risk("233946644")
 "How many EOL systems do we have?"             → get_tech_debt()
-"What's our cloud posture?"                    → get_cloud_risk()
-"What modules should we add?"                  → get_recommendations()
 "What's our patch/mitigate status?"            → get_eliminate_status()
-"Show me all confirmed critical findings"      → get_etm_findings(qql="vulnerabilities.vulnerability.severity:5")
-"Am I affected by Log4Shell across all sources?"→ get_etm_findings(qql="vulnerabilities.vulnerability.cveIds:CVE-2021-44228")
+```
+
+### Cloud & Infrastructure
+```
+"What's our cloud posture?"                    → get_cloud_risk()
+"What cloud threats were detected this week?"  → get_cdr_findings(days=7)
+"Show me critical AWS CDR findings"            → get_cdr_findings(severity="CRITICAL", cloud_provider="AWS")
 "Are our scanners healthy?"                    → get_scanner_health()
 ```
+
+### ETM Findings
+```
+"Show me all confirmed critical findings"      → get_etm_findings(qql="vulnerabilities.vulnerability.severity:5")
+"Am I affected by Log4Shell across all sources?" → get_etm_findings(qql="vulnerabilities.vulnerability.cveIds:CVE-2021-44228")
+```
+
+### Multi-Tool Workflows
+```
+"New critical CVE just dropped — what do I need to know?"
+→ investigate_cve() → get_threat_intel() → get_patch_status()
+
+"Prepare me for the weekly security standup"
+→ get_morning_report() → get_weekly_priorities() → get_eliminate_status()
+
+"Briefing the CISO on our security program"
+→ get_security_posture() → get_threat_intel() → get_patch_status() → get_recommendations()
+```
+
+See [docs/examples.md](docs/examples.md) for the full Q&A reference with 100+ mapped examples.
 
 ## Qualys PODs
 
