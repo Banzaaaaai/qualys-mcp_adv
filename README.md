@@ -1,6 +1,6 @@
 # Qualys MCP Server
 
-A lightweight MCP server that connects AI assistants to Qualys security data. **17 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
+A lightweight MCP server that connects AI assistants to Qualys security data. **22 tools**, pure Python, zero config beyond credentials. Install with `uvx` and start asking security questions in plain English.
 
 ## Setup
 
@@ -38,7 +38,7 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 
 ## Tools
 
-17 tools covering vulnerability management, threat intelligence, asset risk, cloud security, containers, TruRisk Eliminate, ETM findings, and security program coaching.
+22 tools covering vulnerability management, threat intelligence, asset risk, cloud security, containers, TruRisk Eliminate, ETM findings, and security program coaching.
 
 ### Daily Operations & Coaching
 
@@ -73,6 +73,9 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 | Tool | What it answers |
 |------|----------------|
 | `get_asset_risk` | Why is this asset risky? TruRisk score, software inventory, EOL status |
+| `get_asset_full_profile` | Full single-asset profile combining CSAM + ETM + VMDR detections in parallel (~5-8s) |
+| `get_risk_by_tag` | Risk distribution for a tagged asset group (e.g., 'PCI', 'Production', 'AWS') |
+| `get_environment_summary` | Fast all-CSAM environment snapshot: OS, cloud, EOL, criticality tiers (<3s) |
 | `get_tech_debt` | How many EOL/EOS systems do we have? OS and hardware lifecycle status |
 | `get_cloud_risk` | What's our cloud security posture? AWS/Azure/GCP accounts and failed controls |
 | `get_image_vulns` | What vulns are in this container image? Severity breakdown and fixes |
