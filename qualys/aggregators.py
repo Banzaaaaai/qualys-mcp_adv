@@ -6169,3 +6169,88 @@ def olvm_auth_agg(limit: int = 50, detail: str = "standard") -> dict:
     }
     return _apply_detail_level(_with_meta(result, 'records', len(records)), detail,
                                list_keys=['records'])
+
+
+# ---------------------------------------------------------------------------
+# KnowledgeBase v4 (VM 10.38.2) — nocache + Deep Scan QID support
+# ---------------------------------------------------------------------------
+
+def kb_v4_agg(qids=None, cve=None, nocache=False, limit=100, detail="standard") -> dict:
+    """Query KnowledgeBase v4 with optional nocache and Deep Scan QID support."""
+    result = get_kb_v4(qids=qids, cve=cve, nocache=nocache, limit=limit)
+    vulns = result.get('vulns', [])
+    deep_scan_count = sum(1 for v in vulns if v.get('deepScan'))
+
+    summary = f"{len(vulns)} vulnerability records from KB v4"
+    if deep_scan_count:
+        summary += f" ({deep_scan_count} Deep Scan QIDs)"
+    if result.get('error'):
+        summary = f"KB v4 error: {result['error']}"
+
+    out = {
+        'vulns': vulns,
+        'totalVulns': len(vulns),
+        'deepScanCount': deep_scan_count,
+        'nocache': nocache,
+        'summary': summary,
+    }
+    return _apply_detail_level(_with_meta(out, 'vulns', len(vulns)), detail, list_keys=['vulns'])
+
+
+# ---------------------------------------------------------------------------
+# CVE Detection v3 (VM 10.38.2) — CVE-centric detection view
+# ---------------------------------------------------------------------------
+
+def cve_detections_agg(cve_id: str, status: str = "Active", days: int = 90,
+                       limit: int = 200, detail: str = "standard") -> dict:
+    """Get host detections for a specific CVE using the v3 CVE detection endpoint."""
+    detections = get_cve_detections(cve_id=cve_id, status=status, days=days, limit=limit)
+
+    if not detections:
+        return {
+            'cve': cve_id,
+            'detections': [],
+            'affectedHosts': 0,
+            'summary': (f"No active detections found for {cve_id} in the last {days} days "
+                        f"or CVE detection endpoint not available on this subscription."),
+            '_meta': {'returned': 0, 'total': 0, 'truncated': False},
+        }
+
+    hosts = {d['hostId'] for d in detections if d.get('hostId')}
+    ips = {d['ip'] for d in detections if d.get('ip')}
+    qids = {d['qid'] for d in detections if d.get('qid')}
+
+    result = {
+        'cve': cve_id,
+        'detections': detections[:limit],
+        'affectedHosts': len(hosts) or len(ips),
+        'affectedQids': sorted(qids),
+        'summary': (f"{len(hosts) or len(ips)} hosts affected by {cve_id} "
+                    f"({len(detections)} detections, last {days} days)"),
+    }
+    return _apply_detail_level(_with_meta(result, 'detections', len(detections)), detail,
+                               list_keys=['detections'])
+
+
+# ---------------------------------------------------------------------------
+# Dynamic QID Search Lists (VM 10.38.1)
+# ---------------------------------------------------------------------------
+
+def dynamic_search_lists_agg(limit: int = 50, detail: str = "standard") -> dict:
+    """List dynamic QID search lists defined in this subscription."""
+    lists = get_dynamic_search_lists(limit=limit)
+
+    if not lists:
+        return {
+            'searchLists': [],
+            'summary': 'No dynamic QID search lists found or feature not configured.',
+            '_meta': {'returned': 0, 'total': 0, 'truncated': False},
+        }
+
+    result = {
+        'searchLists': lists[:limit],
+        'totalLists': len(lists),
+        'summary': f"{len(lists)} dynamic QID search list(s) configured",
+    }
+    return _apply_detail_level(_with_meta(result, 'searchLists', len(lists)), detail,
+                               list_keys=['searchLists'])
