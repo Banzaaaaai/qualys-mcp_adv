@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Complete inventory of known Qualys API endpoints. Used for gap analysis against api.py.",
-    "lastUpdated": "2026-04-23",
+    "lastUpdated": "2026-04-30",
     "sources": "Qualys docs crawl + manual verification + release notes + US2 live testing"
   },
   "modules": {
@@ -122,6 +122,36 @@
           "path": "/api/2.0/fo/auth/olvm/",
           "status": "not_needed",
           "description": "OLVM auth record create/update/delete (write)"
+        },
+        {
+          "method": "GET",
+          "path": "/api/3.0/fo/asset/host/vm/cve_detection/",
+          "status": "implemented",
+          "description": "CVE-based host detection v3 (fixed in VM 10.38.2)"
+        },
+        {
+          "method": "GET",
+          "path": "/api/5.0/fo/asset/host/vm/detection/",
+          "status": "not_needed",
+          "description": "Host detection v5 CSV output (same data shape as v2, CSV-only fix in VM 10.38.2)"
+        },
+        {
+          "method": "GET",
+          "path": "/api/4.0/fo/knowledge_base/vuln/",
+          "status": "implemented",
+          "description": "KnowledgeBase v4 — nocache support, Deep Scan QIDs (VM 10.38.2)"
+        },
+        {
+          "method": "GET",
+          "path": "/api/2.0/fo/qid/search_list/dynamic/",
+          "status": "implemented",
+          "description": "Dynamic QID search list — list action (date filter fix in VM 10.38.1)"
+        },
+        {
+          "method": "POST",
+          "path": "/api/2.0/fo/qid/search_list/dynamic/",
+          "status": "not_needed",
+          "description": "Dynamic QID search list — create/update/delete (write)"
         }
       ]
     },
