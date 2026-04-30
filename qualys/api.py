@@ -444,6 +444,20 @@ def get_bearer_token():
             return None
 
 
+def _invalidate_bearer_token(stale_token):
+    """Invalidate the cached bearer token only if it still matches stale_token.
+
+    Prevents a race where two concurrent 401 handlers both clear the token,
+    causing the second to null out a freshly-fetched token and trigger a
+    redundant serial auth call.
+    """
+    global BEARER_TOKEN, BEARER_TOKEN_TIME
+    with AUTH_LOCK:
+        if BEARER_TOKEN == stale_token:
+            BEARER_TOKEN = None
+            BEARER_TOKEN_TIME = None
+
+
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
@@ -489,12 +503,11 @@ def _api_get_inner(url, gateway, timeout, not_found_ok, server_error_sentinel):
                 time.sleep(delay)
                 continue
             if e.code == 401 and gateway and attempt == 0:
-                # Token may have expired mid-session — force a fresh token and retry once.
+                # Token may have expired mid-session — invalidate only the token we
+                # used (stale_token check prevents concurrent handlers from cascading
+                # into multiple serial auth fetches).
                 _count_api_error(401, gateway=True)
-                with AUTH_LOCK:
-                    global BEARER_TOKEN, BEARER_TOKEN_TIME
-                    BEARER_TOKEN = None
-                    BEARER_TOKEN_TIME = None
+                _invalidate_bearer_token(token)
                 _log(f"Got 401 on gateway call, forcing token refresh: {url.split('?')[0]}")
                 continue
             if e.code in KB_CONFLICT_RETRY_STATUS and attempt < KB_CONFLICT_MAX_RETRIES - 1:
@@ -2395,4 +2408,143 @@ def get_olvm_auth_records(limit=50):
             records = [records]
         return records
     except (json.JSONDecodeError, TypeError):
+        return []
+
+
+# ---------------------------------------------------------------------------
+# VMDR — KnowledgeBase v4 (VM 10.38.2) — nocache + Deep Scan QID support
+# ---------------------------------------------------------------------------
+
+
+def get_kb_v4(qids=None, cve=None, nocache=False, details='All', limit=100):
+    """Query KnowledgeBase v4 — supports nocache=1 and Deep Scan QIDs.
+
+    v4 path fixed in VM 10.38.2 (nocache parameter, Deep Scan QIDs).
+    Falls back to v2 response shape so callers can use parse_vuln_xml.
+    """
+    url = f"{BASE_URL}/api/4.0/fo/knowledge_base/vuln/?action=list&details={details}"
+    if qids:
+        ids_str = ','.join(str(q) for q in (qids if isinstance(qids, list) else [qids]))
+        url += f"&ids={ids_str}"
+    if cve:
+        url += f"&cve={cve}"
+    if nocache:
+        url += "&nocache=1"
+    data = api_get(url, timeout=60)
+    if data == 'KB_BUSY':
+        return {'error': KB_BUSY_MSG, 'vulns': []}
+    if not data:
+        return {'vulns': []}
+    try:
+        root = ET.fromstring(data)
+        vulns = []
+        for v in root.findall('.//VULN')[:limit]:
+            entry = parse_vuln_xml(v)
+            # v4 may include IS_DEEP_SCAN field
+            deep_scan = v.findtext('IS_DEEP_SCAN', '')
+            if deep_scan.upper() in ('TRUE', '1', 'YES'):
+                entry['deepScan'] = True
+            vulns.append(entry)
+        return {'vulns': vulns, 'count': len(vulns)}
+    except ET.ParseError:
+        return {'vulns': [], 'error': 'parse_error'}
+
+
+# ---------------------------------------------------------------------------
+# VMDR — CVE Detection v3 (VM 10.38.2)
+# ---------------------------------------------------------------------------
+
+
+def get_cve_detections(cve_id, status='Active', days=90, limit=200):
+    """Get host detections for a specific CVE using the v3 CVE detection endpoint.
+
+    Queries /api/3.0/fo/asset/host/vm/cve_detection/ which provides a
+    CVE-centric view of detections (fixed in VM 10.38.2).
+
+    Returns list of dicts: [{cve, qid, host_id, ip, hostname, status, severity}].
+    """
+    after_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
+    url = (f"{BASE_URL}/api/3.0/fo/asset/host/vm/cve_detection/"
+           f"?action=list&cve_id={cve_id}&status={status}"
+           f"&vm_processed_after={after_date}&show_qds=1")
+    data = api_get(url, timeout=60, not_found_ok=False)
+    if not data:
+        return []
+    try:
+        root = ET.fromstring(data)
+        results = []
+        for host in root.findall('.//HOST'):
+            host_id = host.findtext('ID', '')
+            ip = host.findtext('IP', '')
+            hostname = host.findtext('DNS', '') or host.findtext('HOSTNAME', '')
+            for det in host.findall('.//DETECTION')[:limit]:
+                qid = det.findtext('QID', '')
+                sev = det.findtext('SEVERITY', '')
+                det_status = det.findtext('STATUS', status)
+                first_found = det.findtext('FIRST_FOUND_DATETIME', '')
+                last_found = det.findtext('LAST_FOUND_DATETIME', '')
+                qds_el = det.find('QDS')
+                qds = int(qds_el.text) if qds_el is not None and qds_el.text else None
+                results.append({
+                    'cve': cve_id,
+                    'qid': safe_int(qid) if qid else None,
+                    'hostId': safe_int(host_id) if host_id else None,
+                    'ip': ip,
+                    'hostname': hostname,
+                    'status': det_status,
+                    'severity': safe_int(sev) if sev else None,
+                    'qds': qds,
+                    'firstFound': first_found,
+                    'lastFound': last_found,
+                })
+                if len(results) >= limit:
+                    break
+            if len(results) >= limit:
+                break
+        return results
+    except ET.ParseError:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# VMDR — Dynamic QID Search Lists (VM 10.38.1)
+# ---------------------------------------------------------------------------
+
+
+def get_dynamic_search_lists(limit=50):
+    """List dynamic QID search lists defined in this subscription.
+
+    Queries /api/2.0/fo/qid/search_list/dynamic/?action=list.
+    Date-filter fix landed in VM 10.38.1 (published_date_between parameter).
+    Returns list of dicts: [{id, title, criteria, qids}].
+    """
+    url = f"{BASE_URL}/api/2.0/fo/qid/search_list/dynamic/?action=list"
+    data = api_get(url, timeout=30, not_found_ok=True)
+    if not data:
+        return []
+    try:
+        root = ET.fromstring(data)
+        lists = []
+        for sl in root.findall('.//DYNAMIC_SEARCH_LIST')[:limit]:
+            sl_id = sl.findtext('ID', '') or sl.findtext('SEARCH_LIST_ID', '')
+            title = sl.findtext('TITLE', '') or sl.findtext('NAME', '')
+            criteria_el = sl.find('CRITERIA')
+            criteria = {}
+            if criteria_el is not None:
+                for c in criteria_el:
+                    criteria[c.tag.lower()] = c.text or ''
+            qids_el = sl.find('QIDS')
+            qids = []
+            if qids_el is not None:
+                for q in qids_el.findall('QID'):
+                    qids.append(safe_int(q.text) if q.text else None)
+            lists.append({
+                'id': safe_int(sl_id) if sl_id else None,
+                'title': title,
+                'criteria': criteria,
+                'qidCount': len(qids),
+                'qids': qids[:20],
+            })
+        return lists
+    except ET.ParseError:
         return []
