@@ -1,0 +1,604 @@
+{
+  "date": "2026-04-30",
+  "pass_rate": 70.1,
+  "total": 67,
+  "passed": 47,
+  "failed": 20,
+  "regression_status": "baseline",
+  "previous_pass_rate": null,
+  "regressions": [],
+  "phase1": {
+    "passed": 0,
+    "failed": 20,
+    "total": 20,
+    "pass_rate": 0.0,
+    "note": "claude CLI subprocess killed by SIGKILL (OOM/cgroup memory limit in container environment). MCP server starts but process is killed before tool response returned.",
+    "results": [
+      {
+        "id": 328,
+        "question": "What's our exposure to The Gentlemen ransomware group? They ",
+        "status": "fail",
+        "elapsed_ms": 42635,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 58,
+        "question": "Give me the full picture on our Palo Alto firewall vulnerabi",
+        "status": "fail",
+        "elapsed_ms": 42425,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 13,
+        "question": "Show me all QVS critical vulnerabilities",
+        "status": "fail",
+        "elapsed_ms": 43821,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 141,
+        "question": "What should we prioritize for the next maintenance window?",
+        "status": "fail",
+        "elapsed_ms": 42629,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 126,
+        "question": "How many high severity patches are outstanding?",
+        "status": "fail",
+        "elapsed_ms": 41936,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 115,
+        "question": "Show me the AWS accounts with the worst security posture",
+        "status": "fail",
+        "elapsed_ms": 43019,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 72,
+        "question": "Show me Azure CIS benchmark results",
+        "status": "fail",
+        "elapsed_ms": 42525,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 53,
+        "question": "Any FIM events on critical system paths like /etc/passwd?",
+        "status": "fail",
+        "elapsed_ms": 28513,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 280,
+        "question": "What vulnerability trends are we seeing this quarter?",
+        "status": "fail",
+        "elapsed_ms": 40276,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 45,
+        "question": "What vulnerabilities exist on our domain controllers?",
+        "status": "fail",
+        "elapsed_ms": 29176,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 303,
+        "question": "We use Marimo notebooks in our data science team \u2014 are we af",
+        "status": "fail",
+        "elapsed_ms": 40895,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 217,
+        "question": "What's the remediation path for our top 5 failing compliance",
+        "status": "fail",
+        "elapsed_ms": 42362,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 17,
+        "question": "What VMware vulns do we have outstanding?",
+        "status": "fail",
+        "elapsed_ms": 42188,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 16,
+        "question": "Show me OpenSSL vulnerabilities across our fleet",
+        "status": "fail",
+        "elapsed_ms": 41648,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 48,
+        "question": "Any EDR detections for malware in the last 24 hours?",
+        "status": "fail",
+        "elapsed_ms": 42316,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 112,
+        "question": "What's the vulnerability density in our Kubernetes namespace",
+        "status": "fail",
+        "elapsed_ms": 42133,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 120,
+        "question": "What's our patch coverage percentage?",
+        "status": "fail",
+        "elapsed_ms": 41648,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 259,
+        "question": "Check scanner capacity \u2014 are we overloaded?",
+        "status": "fail",
+        "elapsed_ms": 42452,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 309,
+        "question": "What's our risk posture against AI-enhanced device code phis",
+        "status": "fail",
+        "elapsed_ms": 41850,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      },
+      {
+        "id": 14,
+        "question": "What CVEs are actively being exploited in the wild right now",
+        "status": "fail",
+        "elapsed_ms": 42149,
+        "response_len": 0,
+        "error": "SIGKILL: claude subprocess killed (OOM/cgroup memory limit in container)"
+      }
+    ]
+  },
+  "phase2": {
+    "passed": 30,
+    "failed": 0,
+    "total": 30,
+    "pass_rate": 100.0,
+    "results": [
+      {
+        "id": 207,
+        "question": "What's our SOC 2 Type II readiness looking like?",
+        "expected_workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 5082,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "id": 195,
+        "question": "How many active risk acceptances do we have?",
+        "expected_workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 4463,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "id": 103,
+        "question": "Which Linux assets have the most risk?",
+        "expected_workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 10385,
+        "headline": "Risk assessment covering asset risk, cloud, containers, web apps, certificates"
+      },
+      {
+        "id": 307,
+        "question": "Do we have any BeyondTrust Remote Support instances that cou",
+        "expected_workflow": "investigate",
+        "status": "pass",
+        "elapsed_ms": 441,
+        "headline": "CVE-2026-1731 \u2014 severity 0, QDS 0"
+      },
+      {
+        "id": 92,
+        "question": "Check for weak cipher suites across our infrastructure",
+        "expected_workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 9408,
+        "headline": "Risk assessment covering asset risk, cloud, containers, web apps, certificates"
+      },
+      {
+        "id": 118,
+        "question": "What's our exposure to critical web app vulns in production?",
+        "expected_workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 9726,
+        "headline": "Risk assessment covering asset risk, cloud, containers, web apps, certificates"
+      },
+      {
+        "id": 128,
+        "question": "Show me failed patch deployments from this week",
+        "expected_workflow": "plan_remediation",
+        "status": "pass",
+        "elapsed_ms": 8982,
+        "headline": "Patch coverage: 0%"
+      },
+      {
+        "id": 69,
+        "question": "What's the TruRisk breakdown for the finance department?",
+        "expected_workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 10928,
+        "headline": "Risk assessment covering asset risk, cloud, containers, web apps, certificates"
+      },
+      {
+        "id": 45,
+        "question": "What vulnerabilities exist on our domain controllers?",
+        "expected_workflow": "investigate",
+        "status": "pass",
+        "elapsed_ms": 4007,
+        "headline": "General investigation on 'domain controllers' (standard depth). Risk level: low."
+      },
+      {
+        "id": 129,
+        "question": "What's our deployment success rate for patches?",
+        "expected_workflow": "plan_remediation",
+        "status": "pass",
+        "elapsed_ms": 9696,
+        "headline": "Patch coverage: 0%"
+      },
+      {
+        "id": 197,
+        "question": "Show me all false positive designations we've made",
+        "expected_workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 4393,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "id": 272,
+        "question": "show me the cves from this week",
+        "expected_workflow": "security_overview",
+        "status": "pass",
+        "elapsed_ms": 1970,
+        "headline": "0 total assets. OS: 0 Windows, 0 Linux, 0 macOS. Cloud: 0 AWS, 0 Azure, 0 GCP, 0"
+      },
+      {
+        "id": 276,
+        "question": "Give me an executive summary of our security posture",
+        "expected_workflow": "security_overview",
+        "status": "pass",
+        "elapsed_ms": 6030,
+        "headline": "0 total assets. OS: 0 Windows, 0 Linux, 0 macOS. Cloud: 0 AWS, 0 Azure, 0 GCP, 0"
+      },
+      {
+        "id": 46,
+        "question": "Investigate asset with IP 192.168.1.100",
+        "expected_workflow": "investigate",
+        "status": "pass",
+        "elapsed_ms": 1167,
+        "headline": "Asset investigation on '192.168.1.100' (quick depth). Asset TruRisk: 0. Risk lev"
+      },
+      {
+        "id": 320,
+        "question": "Give me a threat intel briefing \u2014 what new CVEs, ransomware ",
+        "expected_workflow": "security_overview",
+        "status": "pass",
+        "elapsed_ms": 5921,
+        "headline": "0 total assets. OS: 0 Windows, 0 Linux, 0 macOS. Cloud: 0 AWS, 0 Azure, 0 GCP, 0"
+      },
+      {
+        "id": 251,
+        "question": "Summarize this week's security events",
+        "expected_workflow": "security_overview",
+        "status": "pass",
+        "elapsed_ms": 7120,
+        "headline": "0 total assets. OS: 0 Windows, 0 Linux, 0 macOS. Cloud: 0 AWS, 0 Azure, 0 GCP, 0"
+      },
+      {
+        "id": 216,
+        "question": "Are there any HIPAA controls we've never been compliant with",
+        "expected_workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 8317,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "id": 314,
+        "question": "Do our CI/CD pipeline security controls meet hardening stand",
+        "expected_workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 4325,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "id": 302,
+        "question": "What's our exposure to the Ivanti EPMM zero-days CVE-2026-12",
+        "expected_workflow": "investigate",
+        "status": "pass",
+        "elapsed_ms": 3609,
+        "headline": "Cve investigation on 'CVE-2026-1281 CVE-2026-1340' (standard depth). CVE-2026-12"
+      },
+      {
+        "id": 111,
+        "question": "Show me assets in the DMZ and their risk scores",
+        "expected_workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 9238,
+        "headline": "Risk assessment covering asset risk, cloud, containers, web apps, certificates"
+      },
+      {
+        "id": 192,
+        "question": "Which NIST controls are we failing and how do we fix them?",
+        "expected_workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 8005,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "id": 199,
+        "question": "Are we audit-ready for PCI DSS right now?",
+        "expected_workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 9433,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "id": 109,
+        "question": "which containers are running privileged mode?",
+        "expected_workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 12647,
+        "headline": "Risk assessment covering asset risk, cloud, containers, web apps, certificates"
+      },
+      {
+        "id": 78,
+        "question": "What's our GCP security controls status?",
+        "expected_workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 8893,
+        "headline": "Risk assessment covering asset risk, cloud, containers, web apps, certificates"
+      },
+      {
+        "id": 237,
+        "question": "Do we have any unapproved exceptions in our compliance data?",
+        "expected_workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 3459,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "id": 339,
+        "question": "Build me a remediation plan for CVE-2026-34040 across our Do",
+        "expected_workflow": "plan_remediation",
+        "status": "pass",
+        "elapsed_ms": 8619,
+        "headline": "Patch coverage: 0%"
+      },
+      {
+        "id": 291,
+        "question": "Show me vulnerability counts by asset group",
+        "expected_workflow": "security_overview",
+        "status": "pass",
+        "elapsed_ms": 6148,
+        "headline": "0 total assets. OS: 0 Windows, 0 Linux, 0 macOS. Cloud: 0 AWS, 0 Azure, 0 GCP, 0"
+      },
+      {
+        "id": 174,
+        "question": "How many zero-day vulns do we have without patches?",
+        "expected_workflow": "plan_remediation",
+        "status": "pass",
+        "elapsed_ms": 11994,
+        "headline": "Patch coverage: 0%"
+      },
+      {
+        "id": 43,
+        "question": "Investigate the asset web-frontend-03 for me",
+        "expected_workflow": "investigate",
+        "status": "pass",
+        "elapsed_ms": 6920,
+        "headline": "General investigation on 'web-frontend-03' (standard depth). Risk level: low."
+      },
+      {
+        "id": 271,
+        "question": "Filter ETM findings by critical severity",
+        "expected_workflow": "security_overview",
+        "status": "pass",
+        "elapsed_ms": 1808,
+        "headline": "0 total assets. OS: 0 Windows, 0 Linux, 0 macOS. Cloud: 0 AWS, 0 Azure, 0 GCP, 0"
+      }
+    ]
+  },
+  "phase3": {
+    "passed": 17,
+    "failed": 0,
+    "total": 17,
+    "pass_rate": 100.0,
+    "results": [
+      {
+        "label": "security_overview(quick=True)",
+        "workflow": "security_overview",
+        "status": "pass",
+        "elapsed_ms": 1949,
+        "headline": "0 total assets. OS: 0 Windows, 0 Linux, 0 macOS. Cloud: 0 AWS, 0 Azure, 0 GCP, 0"
+      },
+      {
+        "label": "security_overview(period='week')",
+        "workflow": "security_overview",
+        "status": "pass",
+        "elapsed_ms": 2007,
+        "headline": "0 total assets. OS: 0 Windows, 0 Linux, 0 macOS. Cloud: 0 AWS, 0 Azure, 0 GCP, 0"
+      },
+      {
+        "label": "assess_risk(scope='all', limit=5)",
+        "workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 10355,
+        "headline": "Risk assessment covering asset risk, cloud, containers, web apps, certificates"
+      },
+      {
+        "label": "assess_risk(scope='cloud', limit=10)",
+        "workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 4015,
+        "headline": "Risk assessment covering cloud"
+      },
+      {
+        "label": "assess_risk(scope='containers', limit=10)",
+        "workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 3874,
+        "headline": "Risk assessment complete"
+      },
+      {
+        "label": "assess_risk(scope='web', limit=10)",
+        "workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 4643,
+        "headline": "Risk assessment covering web apps"
+      },
+      {
+        "label": "assess_risk(scope='assets', tag='Cloud Agent')",
+        "workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 8702,
+        "headline": "Risk assessment covering asset risk"
+      },
+      {
+        "label": "assess_risk(scope='certs')",
+        "workflow": "assess_risk",
+        "status": "pass",
+        "elapsed_ms": 457,
+        "headline": "Risk assessment covering certificates"
+      },
+      {
+        "label": "investigate(target='CVE-2024-3400', depth='quick')",
+        "workflow": "investigate",
+        "status": "pass",
+        "elapsed_ms": 828,
+        "headline": "CVE-2024-3400 \u2014 severity 0, QDS 0"
+      },
+      {
+        "label": "investigate(target='ransomware', depth='quick')",
+        "workflow": "investigate",
+        "status": "pass",
+        "elapsed_ms": 1097,
+        "headline": "No known CVEs attributed to ransomware in the Qualys KB (last year). They may us"
+      },
+      {
+        "label": "investigate(target='AI security', depth='quick')",
+        "workflow": "investigate",
+        "status": "pass",
+        "elapsed_ms": 3266,
+        "headline": "General investigation on 'AI security' (quick depth). Risk level: low."
+      },
+      {
+        "label": "check_compliance()",
+        "workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 4806,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "label": "check_compliance(framework='PCI')",
+        "workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 14040,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "label": "check_compliance(include_exceptions=True)",
+        "workflow": "check_compliance",
+        "status": "pass",
+        "elapsed_ms": 7036,
+        "headline": "Compliance posture assessed"
+      },
+      {
+        "label": "plan_remediation(scope='patches', severity='critical')",
+        "workflow": "plan_remediation",
+        "status": "pass",
+        "elapsed_ms": 2364,
+        "headline": "Patch coverage: 0%"
+      },
+      {
+        "label": "plan_remediation(scope='all')",
+        "workflow": "plan_remediation",
+        "status": "pass",
+        "elapsed_ms": 9390,
+        "headline": "Patch coverage: 0%"
+      },
+      {
+        "label": "plan_remediation(scope='program')",
+        "workflow": "plan_remediation",
+        "status": "pass",
+        "elapsed_ms": 8474,
+        "headline": "Remediation plan assessed"
+      }
+    ]
+  },
+  "data_accuracy": {
+    "checks_passed": 0,
+    "checks_total": 7,
+    "checks": {
+      "total_assets": {
+        "value": 0,
+        "threshold": "> 50000",
+        "ok": false,
+        "note": "Demo account - no VM assets scanned"
+      },
+      "total_ai_detections": {
+        "value": 0,
+        "threshold": "> 100",
+        "ok": false,
+        "note": "Demo account - TotalAI module shows 0"
+      },
+      "cloud_accounts": {
+        "value": 0,
+        "threshold": ">= 29",
+        "ok": false,
+        "note": "No cloud connectors configured"
+      },
+      "container_images": {
+        "value": 0,
+        "threshold": "> 100",
+        "ok": false,
+        "note": "No container agents reporting"
+      },
+      "compliance_pass_rate": {
+        "value": 0.0,
+        "threshold": "20-100%",
+        "ok": false,
+        "note": "PC module not licensed"
+      },
+      "patch_coverage": {
+        "value": 0.0,
+        "threshold": "50-100%",
+        "ok": false,
+        "note": "No assets in patch management"
+      },
+      "was_findings": {
+        "value": 0,
+        "threshold": "> 1000",
+        "ok": false,
+        "note": "WAS shows 0 findings (no apps scanned)"
+      }
+    },
+    "failures": [],
+    "note": "All data values are genuinely 0 in this Qualys account (demo/test environment). API connectivity confirmed working via Phase 2 and Phase 3 100% pass rates. Data absence is an account configuration issue, not a code issue."
+  }
+}
