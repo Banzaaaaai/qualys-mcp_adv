@@ -24,6 +24,9 @@ node_modules/
 package-lock.json
 package.json
 
+# Claude Code
+.claude/
+
 # Dev/internal
 devclaw/
 discovery/
