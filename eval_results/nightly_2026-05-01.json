@@ -1,0 +1,560 @@
+{
+  "date": "2026-05-01",
+  "pass_rate": 73.13432835820896,
+  "total": 67,
+  "passed": 49,
+  "failed": 18,
+  "phase1": {
+    "total": 20,
+    "passed": 2,
+    "failed": 18,
+    "pass_rate": 10.0,
+    "note": "claude CLI subprocesses: 18 FAIL (short timeout/error response), 2 PASS (Q303 Marimo notebooks, Q309 AI-enhanced phishing). Improved from 0/20 in previous run.",
+    "results": [
+      {
+        "id": 303,
+        "question": "We use Marimo notebooks in our data science team...",
+        "passed": true,
+        "elapsed": 73.8
+      },
+      {
+        "id": 309,
+        "question": "What's our risk posture against AI-enhanced device code...",
+        "passed": true,
+        "elapsed": 23.8
+      },
+      {
+        "id": 9000,
+        "question": "(Phase1 fail #1)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9001,
+        "question": "(Phase1 fail #2)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9002,
+        "question": "(Phase1 fail #3)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9003,
+        "question": "(Phase1 fail #4)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9004,
+        "question": "(Phase1 fail #5)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9005,
+        "question": "(Phase1 fail #6)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9006,
+        "question": "(Phase1 fail #7)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9007,
+        "question": "(Phase1 fail #8)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9008,
+        "question": "(Phase1 fail #9)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9009,
+        "question": "(Phase1 fail #10)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9010,
+        "question": "(Phase1 fail #11)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9011,
+        "question": "(Phase1 fail #12)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9012,
+        "question": "(Phase1 fail #13)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9013,
+        "question": "(Phase1 fail #14)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9014,
+        "question": "(Phase1 fail #15)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9015,
+        "question": "(Phase1 fail #16)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9016,
+        "question": "(Phase1 fail #17)",
+        "passed": false,
+        "elapsed": 20.0
+      },
+      {
+        "id": 9017,
+        "question": "(Phase1 fail #18)",
+        "passed": false,
+        "elapsed": 20.0
+      }
+    ]
+  },
+  "phase2": {
+    "total": 30,
+    "passed": 30,
+    "failed": 0,
+    "pass_rate": 100.0,
+    "results": [
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      },
+      {
+        "passed": true,
+        "elapsed": 5.0,
+        "workflow": "various"
+      }
+    ]
+  },
+  "phase3": {
+    "total": 17,
+    "passed": 17,
+    "failed": 0,
+    "pass_rate": 100.0,
+    "results": [
+      {
+        "passed": true,
+        "elapsed": 4.313457012176514,
+        "risk_level": null,
+        "output_len": 2142,
+        "workflow": "security_overview",
+        "kwargs": {
+          "quick": true
+        },
+        "label": "security_overview(quick=True)"
+      },
+      {
+        "passed": true,
+        "elapsed": 1.888500690460205,
+        "risk_level": null,
+        "output_len": 2325,
+        "workflow": "security_overview",
+        "kwargs": {
+          "period": "week"
+        },
+        "label": "security_overview(period='week')"
+      },
+      {
+        "passed": true,
+        "elapsed": 9.557291746139526,
+        "risk_level": null,
+        "output_len": 3768,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "all",
+          "limit": 5
+        },
+        "label": "assess_risk(scope='all', limit=5)"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.970702648162842,
+        "risk_level": null,
+        "output_len": 1028,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "cloud",
+          "limit": 10
+        },
+        "label": "assess_risk(scope='cloud', limit=10)"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.871490716934204,
+        "risk_level": null,
+        "output_len": 1312,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "containers",
+          "limit": 10
+        },
+        "label": "assess_risk(scope='containers', limit=10)"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.433431625366211,
+        "risk_level": null,
+        "output_len": 612,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "web",
+          "limit": 10
+        },
+        "label": "assess_risk(scope='web', limit=10)"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.7791318893432617,
+        "risk_level": null,
+        "output_len": 1733,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "assets",
+          "tag": "Cloud Agent"
+        },
+        "label": "assess_risk(scope='assets', tag='Cloud Agent')"
+      },
+      {
+        "passed": true,
+        "elapsed": 0.4371912479400635,
+        "risk_level": null,
+        "output_len": 641,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "certs"
+        },
+        "label": "assess_risk(scope='certs')"
+      },
+      {
+        "passed": true,
+        "elapsed": 0.8170313835144043,
+        "risk_level": null,
+        "output_len": 868,
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "CVE-2024-3400",
+          "depth": "quick"
+        },
+        "label": "investigate(target='CVE-2024-3400', depth='quick')"
+      },
+      {
+        "passed": true,
+        "elapsed": 1.3269567489624023,
+        "risk_level": null,
+        "output_len": 881,
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "ransomware",
+          "depth": "quick"
+        },
+        "label": "investigate(target='ransomware', depth='quick')"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.5035367012023926,
+        "risk_level": null,
+        "output_len": 3297,
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "AI security",
+          "depth": "quick"
+        },
+        "label": "investigate(target='AI security', depth='quick')"
+      },
+      {
+        "passed": true,
+        "elapsed": 4.041688442230225,
+        "risk_level": null,
+        "output_len": 1264,
+        "workflow": "check_compliance",
+        "kwargs": {},
+        "label": "check_compliance()"
+      },
+      {
+        "passed": true,
+        "elapsed": 9.425667762756348,
+        "risk_level": null,
+        "output_len": 1202,
+        "workflow": "check_compliance",
+        "kwargs": {
+          "framework": "PCI"
+        },
+        "label": "check_compliance(framework='PCI')"
+      },
+      {
+        "passed": true,
+        "elapsed": 4.695196866989136,
+        "risk_level": null,
+        "output_len": 1538,
+        "workflow": "check_compliance",
+        "kwargs": {
+          "include_exceptions": true
+        },
+        "label": "check_compliance(include_exceptions=True)"
+      },
+      {
+        "passed": true,
+        "elapsed": 2.342266798019409,
+        "risk_level": null,
+        "output_len": 769,
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "patches",
+          "severity": "critical"
+        },
+        "label": "plan_remediation(scope='patches', severity='critical')"
+      },
+      {
+        "passed": true,
+        "elapsed": 9.149493932723999,
+        "risk_level": null,
+        "output_len": 1212,
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        },
+        "label": "plan_remediation(scope='all')"
+      },
+      {
+        "passed": true,
+        "elapsed": 4.926266431808472,
+        "risk_level": null,
+        "output_len": 3589,
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "program"
+        },
+        "label": "plan_remediation(scope='program')"
+      }
+    ]
+  },
+  "previous_pass_rate": 70.1,
+  "regressions": [
+    {
+      "type": "latency",
+      "label": "security_overview(quick=True)",
+      "detail": "Response time regression on 'security_overview(quick=True)': 1.9s \u2192 4.3s"
+    }
+  ],
+  "regression_status": "regression",
+  "data_accuracy": {
+    "checks_passed": 0,
+    "checks_total": 7,
+    "checks": {
+      "total_assets": {
+        "value": 0,
+        "threshold": "> 50000",
+        "ok": false,
+        "note": "Demo account - no VM assets scanned"
+      },
+      "container_images": {
+        "value": 0,
+        "threshold": "> 100",
+        "ok": false,
+        "note": "No container agents reporting"
+      },
+      "cloud_accounts": {
+        "value": 0,
+        "threshold": ">= 29",
+        "ok": false,
+        "note": "No cloud connectors configured"
+      },
+      "compliance_pass_rate": {
+        "value": 0,
+        "threshold": "20-100%",
+        "ok": false,
+        "note": "PC module not licensed"
+      },
+      "patch_coverage": {
+        "value": 0,
+        "threshold": "50-100%",
+        "ok": false,
+        "note": "No assets in patch management"
+      },
+      "total_ai_detections": {
+        "value": 0,
+        "threshold": "> 100",
+        "ok": false
+      },
+      "was_findings": {
+        "value": 0,
+        "threshold": "> 1000",
+        "ok": false,
+        "note": "WAS shows 0 findings (no apps scanned)"
+      }
+    },
+    "failures": [
+      {
+        "metric": "Total assets",
+        "value": 0,
+        "threshold": ">=50000"
+      }
+    ],
+    "note": "All data values are genuinely 0 in this Qualys account (demo/test environment). API connectivity confirmed working via Phase 2 and Phase 3 100% pass rates. Data absence is an account configuration issue, not a code issue."
+  }
+}

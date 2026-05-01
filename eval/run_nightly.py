@@ -27,7 +27,6 @@ from qualys.workflows.assess_risk import assess_risk
 from qualys.workflows.investigate import investigate
 from qualys.workflows.compliance import check_compliance
 from qualys.workflows.remediation import plan_remediation
-from qualys.api import get_api_error_counts, reset_api_error_counts
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -237,7 +236,6 @@ def phase3():
     print("PHASE 3 — Customer Simulation (17 fixed questions)")
     print('='*60)
 
-    reset_api_error_counts()
     results = []
     for i, (workflow, kwargs) in enumerate(PHASE3_CASES, 1):
         label = f"{workflow}({', '.join(f'{k}={repr(v)}' for k,v in kwargs.items())})"
@@ -252,12 +250,8 @@ def phase3():
         print(f"         → {status} ({r.get('elapsed', 0):.1f}s) {err}")
 
     passed = sum(1 for r in results if r["passed"])
-    # Capture API error counts so regression check can apply latency tolerance
-    error_counts = get_api_error_counts()
     print(f"\n  Phase 3 result: {passed}/17 passed ({100*passed/17:.0f}%)")
-    if any(error_counts.get(k, 0) > 0 for k in ("503", "502", "429")):
-        print(f"  API errors detected during run: {error_counts} — latency threshold widened")
-    return results, error_counts
+    return results
 
 # ── Phase 4: Regression Check ─────────────────────────────────────────────────
 
@@ -292,19 +286,40 @@ def phase4(today_results: dict, previous: dict | None, api_error_counts: dict | 
         print(f"  API errors detected {err} — latency threshold widened to {latency_multiplier}×")
 
     # Check Phase 3 individually (fixed questions, comparable run-to-run)
-    prev_p3 = {r["label"]: r for r in previous.get("phase3", [])}
-    curr_p3 = {r["label"]: r for r in today_results.get("phase3", [])}
+    # Support both old format (phase3 is a dict with "results" key) and
+    # new format (phase3 is already a list).
+    def _p3_results(data):
+        p3 = data.get("phase3", [])
+        if isinstance(p3, dict):
+            return p3.get("results", [])
+        return p3
+
+    def _r_passed(r):
+        """Handle both passed=True (new) and status='pass' (old) formats."""
+        if "passed" in r:
+            return bool(r["passed"])
+        return r.get("status") == "pass"
+
+    def _r_elapsed(r):
+        """Handle both elapsed (new, seconds) and elapsed_ms (old) formats."""
+        if "elapsed" in r:
+            return r["elapsed"]
+        ms = r.get("elapsed_ms", 0)
+        return ms / 1000.0 if ms else 0.0
+
+    prev_p3 = {r["label"]: r for r in _p3_results(previous)}
+    curr_p3 = {r["label"]: r for r in _p3_results(today_results)}
 
     for label, curr_r in curr_p3.items():
         prev_r = prev_p3.get(label)
-        if prev_r and prev_r["passed"] and not curr_r["passed"]:
+        if prev_r and _r_passed(prev_r) and not _r_passed(curr_r):
             msg = f"Phase3 question previously PASSED now FAILS: {label}"
             regressions.append({"type": "question_regression", "label": label, "detail": msg})
             print(f"  *** REGRESSION: {msg}")
 
-        if prev_r and prev_r.get("elapsed", 0) > 0:
-            prev_t = prev_r["elapsed"]
-            curr_t = curr_r.get("elapsed", 0)
+        if prev_r and _r_elapsed(prev_r) > 0:
+            prev_t = _r_elapsed(prev_r)
+            curr_t = _r_elapsed(curr_r)
             if curr_t > prev_t * latency_multiplier:
                 msg = (
                     f"Response time regression on '{label}': "
@@ -459,7 +474,7 @@ def main():
     p2_passed = sum(1 for r in p2_results if r["passed"])
 
     # ── Phase 3 ──────────────────────────────────────────────────────────────
-    p3_results, p3_error_counts = phase3()
+    p3_results = phase3()
     p3_passed = sum(1 for r in p3_results if r["passed"])
 
     # ── Totals ────────────────────────────────────────────────────────────────
@@ -484,7 +499,7 @@ def main():
     }
 
     # ── Phase 4 ──────────────────────────────────────────────────────────────
-    regressions = phase4(today_results, previous, api_error_counts=p3_error_counts)
+    regressions = phase4(today_results, previous)
     today_results["regressions"] = regressions
 
     # ── Phase 5 ──────────────────────────────────────────────────────────────
