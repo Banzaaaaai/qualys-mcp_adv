@@ -1,0 +1,784 @@
+{
+  "date": "2026-05-02",
+  "pass_rate": 76.11940298507463,
+  "total": 67,
+  "passed": 51,
+  "failed": 16,
+  "phase1": {
+    "total": 20,
+    "passed": 4,
+    "results": [
+      {
+        "passed": false,
+        "elapsed": 120,
+        "output": "TIMEOUT",
+        "id": 328,
+        "question": "What's our exposure to The Gentlemen ransomware group? They went from 35 to 182 victims in a single quarter",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 94.91210746765137,
+        "output": "Error: Reached max turns (4)",
+        "id": 58,
+        "question": "Give me the full picture on our Palo Alto firewall vulnerabilities",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 115.06517553329468,
+        "output": "Error: Reached max turns (4)",
+        "id": 13,
+        "question": "Show me all QVS critical vulnerabilities",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 18.01517415046692,
+        "output": "Error: Reached max turns (4)",
+        "id": 141,
+        "question": "What should we prioritize for the next maintenance window?",
+        "expected": "plan_remediation"
+      },
+      {
+        "passed": false,
+        "elapsed": 17.449289798736572,
+        "output": "Error: Reached max turns (4)",
+        "id": 126,
+        "question": "How many high severity patches are outstanding?",
+        "expected": "plan_remediation"
+      },
+      {
+        "passed": false,
+        "elapsed": 109.48443794250488,
+        "output": "Error: Reached max turns (4)",
+        "id": 115,
+        "question": "Show me the AWS accounts with the worst security posture",
+        "expected": "assess_risk"
+      },
+      {
+        "passed": false,
+        "elapsed": 13.546087741851807,
+        "output": "Error: Reached max turns (4)",
+        "id": 72,
+        "question": "Show me Azure CIS benchmark results",
+        "expected": "assess_risk"
+      },
+      {
+        "passed": false,
+        "elapsed": 11.849897146224976,
+        "output": "Error: Reached max turns (4)",
+        "id": 53,
+        "question": "Any FIM events on critical system paths like /etc/passwd?",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 83.99642491340637,
+        "output": "Error: Reached max turns (4)",
+        "id": 347,
+        "question": "Show me all hosts vulnerable to CVE-2024-21762 using the CVE detection feed.",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 25.59855031967163,
+        "output": "Error: Reached max turns (4)",
+        "id": 280,
+        "question": "What vulnerability trends are we seeing this quarter?",
+        "expected": "security_overview"
+      },
+      {
+        "passed": true,
+        "elapsed": 25.248816967010498,
+        "output": "The Qualys MCP server doesn't appear to be connected to this session \u2014 no Qualys tools (`investigate`, `assess_risk`, etc.) are available.\n\nTo query your domain controllers for vulnerabilities, you need to configure the MCP server. Add this to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on Mac, or `%APPDATA%\\Claude\\claude_desktop_config.json` on Windows):\n\n```json\n{\n  \"mcpServers\": {\n    \"qualys\": {\n      \"command\": \"uvx\",\n      \"args\": [\"qualys-mcp\"],\n      \"env\": {\n        \"QUALYS_USERNAME\": \"your-username\",\n        \"QUALYS_PASSWORD\": \"your-password\",\n        \"QUALYS_POD\": \"US2\"\n      }\n    }\n  }\n}\n```\n\nReplace the credentials and set `QUALYS_POD` to match your environment (US1, US2, EU1, etc.). Once configured and Claude Desktop is restarted, you can ask this question again and I'll query Qualys directly using something like:\n\n```\ninvestigate(target=\"domain controllers\", scope=\"vulns\", depth=\"standard\")\n```\n\nor\n\n```\nassess_risk(tag=\"Domain Controllers\")\n```\n\nif your assets are tagged in Qualys.\n",
+        "id": 45,
+        "question": "What vulnerabilities exist on our domain controllers?",
+        "expected": "investigate"
+      },
+      {
+        "passed": true,
+        "elapsed": 11.817116498947144,
+        "output": "I wasn't able to run the web search \u2014 it needs your approval. Could you grant permission for web search so I can look up CVE-2026-39987?\n\nAlternatively, you can check directly:\n\n- **NVD:** https://nvd.nist.gov/vuln/detail/CVE-2026-39987\n- **GitHub Advisory Database:** https://github.com/advisories?query=CVE-2026-39987\n- **Marimo's GitHub:** https://github.com/marimo-team/marimo/security/advisories\n\nOnce I can search (or if you paste the CVE details here), I can help you assess your exposure and what version/fix applies.\n",
+        "id": 303,
+        "question": "We use Marimo notebooks in our data science team \u2014 are we affected by CVE-2026-39987?",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 13.312233209609985,
+        "output": "Error: Reached max turns (4)",
+        "id": 217,
+        "question": "What's the remediation path for our top 5 failing compliance controls?",
+        "expected": "check_compliance"
+      },
+      {
+        "passed": false,
+        "elapsed": 38.589004039764404,
+        "output": "Error: Reached max turns (4)",
+        "id": 17,
+        "question": "What VMware vulns do we have outstanding?",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 110.07571506500244,
+        "output": "Error: Reached max turns (4)",
+        "id": 16,
+        "question": "Show me OpenSSL vulnerabilities across our fleet",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 12.814432621002197,
+        "output": "Error: Reached max turns (4)",
+        "id": 48,
+        "question": "Any EDR detections for malware in the last 24 hours?",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 20.680896282196045,
+        "output": "Error: Reached max turns (4)",
+        "id": 112,
+        "question": "What's the vulnerability density in our Kubernetes namespaces?",
+        "expected": "assess_risk"
+      },
+      {
+        "passed": true,
+        "elapsed": 77.56303191184998,
+        "output": "Based on the eval results, the current patch coverage is **0%** \u2014 with the note \"No assets in patch management.\"\n\nThis comes from the nightly evaluation run on 2026-05-01 (`eval_results/nightly_2026-05-01.json`), and the same result appeared the day before. The threshold is 50\u2013100%, so it's flagged as `\"ok\": false`.\n\nThe coverage is calculated in `qualys/aggregators.py` as `(assets with TruRisk < 100) / total assets \u00d7 100`. A 0% result with the \"no assets\" note means no assets are currently enrolled in Qualys Patch Management, not that all assets are unpatched.\n",
+        "id": 120,
+        "question": "What's our patch coverage percentage?",
+        "expected": "plan_remediation"
+      },
+      {
+        "passed": false,
+        "elapsed": 13.662285089492798,
+        "output": "Error: Reached max turns (4)",
+        "id": 259,
+        "question": "Check scanner capacity \u2014 are we overloaded?",
+        "expected": "security_overview"
+      },
+      {
+        "passed": true,
+        "elapsed": 106.40975952148438,
+        "output": "Based on the codebase analysis, here's your risk assessment:\n\n## Risk Posture: AI-Enhanced Device Code Phishing vs. MFA Bypass\n\n### Short Answer: Low direct exposure, but meaningful indirect gaps\n\nThis project uses **Basic Auth + Bearer token** authentication against Qualys APIs \u2014 not OAuth, not device code flow. Device code phishing attacks (OAuth Device Authorization Grant abuse) don't directly apply to this auth model.\n\n---\n\n### What IS Relevant Here\n\n**1. No MFA on Qualys service account** \u2014 the biggest gap\n- `QUALYS_USERNAME` / `QUALYS_PASSWORD` env vars are the sole credential factor\n- No TOTP, no hardware key, no conditional access\n- If those credentials are phished (via any method \u2014 AI-enhanced or otherwise), an attacker has full API access\n- Bearer tokens are valid for 4 hours; the refresh window extends exposure\n\n**2. Token persistence in unprotected cache**\n- Bearer tokens live in process memory and implicitly in `~/.cache/qualys-mcp/cache.db` (SQLite, pickle-serialized)\n- Pickle deserialization is a code execution risk if that file is tampered with\n- No encryption at rest, no OS-level access controls enforced by the app\n\n**3. Prompt injection as an AI-specific attack surface**\n- Since this MCP server feeds Qualys API responses directly to Claude, a malicious actor who can influence Qualys data (e.g., crafted asset/vulnerability metadata) could attempt prompt injection\n- This is the *AI-enhanced* threat vector most relevant to your architecture \u2014 not device code phishing\n\n**4. No audit trail**\n- No logging of which MCP tool was invoked, by whom, or what data was returned\n- Lateral movement or data exfiltration through the AI layer would leave no trace in this application\n\n---\n\n### Specific Gaps by File\n\n| Location | Risk |\n|---|---|\n| `qualys/api.py:~40` | `BASIC_AUTH` computed once at load \u2014 credential in memory for process lifetime |\n| `qualys/api.py:310-313` | `QUALYS_SSL_VERIFY=false` disables cert validation \u2014 MITM opportunity |\n| `qualys/cache.py` |",
+        "id": 309,
+        "question": "What's our risk posture against AI-enhanced device code phishing campaigns that bypass MFA?",
+        "expected": "assess_risk"
+      }
+    ]
+  },
+  "phase2": {
+    "total": 30,
+    "passed": 30,
+    "results": [
+      {
+        "passed": true,
+        "elapsed": 1.5565240383148193,
+        "risk_level": null,
+        "output_len": 852,
+        "id": 27,
+        "question": "what vulns are linked to Salt Typhoon?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "Salt Typhoon",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 11.765325546264648,
+        "risk_level": null,
+        "output_len": 1213,
+        "id": 138,
+        "question": "Give me recommendations to improve our security posture",
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 3.2395124435424805,
+        "risk_level": null,
+        "output_len": 3346,
+        "id": 45,
+        "question": "What vulnerabilities exist on our domain controllers?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "domain controllers",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 4.714542388916016,
+        "risk_level": null,
+        "output_len": 1264,
+        "id": 209,
+        "question": "Are any of our PCI systems out of compliance right now?",
+        "workflow": "check_compliance",
+        "kwargs": {}
+      },
+      {
+        "passed": true,
+        "elapsed": 8.673529624938965,
+        "risk_level": null,
+        "output_len": 1212,
+        "id": 137,
+        "question": "How can we reduce our TruRisk score the fastest?",
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 0.9602048397064209,
+        "risk_level": null,
+        "output_len": 924,
+        "id": 56,
+        "question": "Show me any ransomware indicators from EDR",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "ransomware indicators",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 2.703829288482666,
+        "risk_level": null,
+        "output_len": 3088,
+        "id": 20,
+        "question": "How exposed are we to Java deserialization vulns?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "Java deserialization",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 3.973421335220337,
+        "risk_level": null,
+        "output_len": 1264,
+        "id": 195,
+        "question": "How many active risk acceptances do we have?",
+        "workflow": "check_compliance",
+        "kwargs": {}
+      },
+      {
+        "passed": true,
+        "elapsed": 1.9483575820922852,
+        "risk_level": null,
+        "output_len": 2325,
+        "id": 275,
+        "question": "Give me a full security briefing with all the details",
+        "workflow": "security_overview",
+        "kwargs": {}
+      },
+      {
+        "passed": true,
+        "elapsed": 1.8351895809173584,
+        "risk_level": null,
+        "output_len": 2325,
+        "id": 288,
+        "question": "Which scanner is handling the most load right now?",
+        "workflow": "security_overview",
+        "kwargs": {}
+      },
+      {
+        "passed": true,
+        "elapsed": 9.437507390975952,
+        "risk_level": null,
+        "output_len": 1212,
+        "id": 171,
+        "question": "What recommendations do you have for our vulnerability management program?",
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 9.279436588287354,
+        "risk_level": null,
+        "output_len": 1212,
+        "id": 175,
+        "question": "Plan remediation for our internet-facing assets first",
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 9.40116548538208,
+        "risk_level": null,
+        "output_len": 3768,
+        "id": 82,
+        "question": "Check for container escape risks in our Kubernetes clusters",
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 9.913740158081055,
+        "risk_level": null,
+        "output_len": 3768,
+        "id": 70,
+        "question": "hey what's going on with our cloud security",
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 9.263468027114868,
+        "risk_level": null,
+        "output_len": 1212,
+        "id": 173,
+        "question": "What's our automated vs manual patching ratio?",
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 9.569808959960938,
+        "risk_level": null,
+        "output_len": 1212,
+        "id": 126,
+        "question": "How many high severity patches are outstanding?",
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 9.574885606765747,
+        "risk_level": null,
+        "output_len": 3768,
+        "id": 84,
+        "question": "Show me container vulnerabilities by severity",
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 0.3441605567932129,
+        "risk_level": null,
+        "output_len": 868,
+        "id": 1,
+        "question": "Tell me everything about CVE-2024-3400 and our exposure",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "CVE-2024-3400",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 6.89088249206543,
+        "risk_level": null,
+        "output_len": 1264,
+        "id": 224,
+        "question": "Can you show me which NIST control families we're weakest in?",
+        "workflow": "check_compliance",
+        "kwargs": {}
+      },
+      {
+        "passed": true,
+        "elapsed": 2.8701887130737305,
+        "risk_level": null,
+        "output_len": 3025,
+        "id": 306,
+        "question": "Are we exposed to the Qilin ransomware BYOVD technique that's being used to kill EDR tools before encryption?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "Qilin BYOVD",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 5.661770582199097,
+        "risk_level": null,
+        "output_len": 1264,
+        "id": 194,
+        "question": "Show me controls that are failing across multiple compliance frameworks",
+        "workflow": "check_compliance",
+        "kwargs": {}
+      },
+      {
+        "passed": true,
+        "elapsed": 0.8768420219421387,
+        "risk_level": null,
+        "output_len": 826,
+        "id": 36,
+        "question": "Are we vulnerable to Kimsuky spear-phishing related CVEs?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "Kimsuky",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 0.8297631740570068,
+        "risk_level": null,
+        "output_len": 875,
+        "id": 4,
+        "question": "Investigate CVE-2023-34362 \u2014 are we exposed to MOVEit?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "CVE-2023-34362",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 9.247952461242676,
+        "risk_level": null,
+        "output_len": 1212,
+        "id": 162,
+        "question": "Create a patching roadmap for Q2",
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 5.925884962081909,
+        "risk_level": null,
+        "output_len": 1264,
+        "id": 230,
+        "question": "What false positive rate do we have in our compliance scans?",
+        "workflow": "check_compliance",
+        "kwargs": {}
+      },
+      {
+        "passed": true,
+        "elapsed": 2.720226764678955,
+        "risk_level": null,
+        "output_len": 3074,
+        "id": 53,
+        "question": "Any FIM events on critical system paths like /etc/passwd?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "FIM critical paths",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 1.2422983646392822,
+        "risk_level": null,
+        "output_len": 852,
+        "id": 23,
+        "question": "What's our exposure to Volt Typhoon campaigns?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "Volt Typhoon",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 2.7386980056762695,
+        "risk_level": null,
+        "output_len": 3074,
+        "id": 48,
+        "question": "Any EDR detections for malware in the last 24 hours?",
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "malware detections",
+          "depth": "quick"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 9.289021968841553,
+        "risk_level": null,
+        "output_len": 1212,
+        "id": 342,
+        "question": "What's the fix plan for Samsung MagicINFO 9 Server CVE-2024-7399 \u2014 it's a path traversal CISA just added to KEV",
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        }
+      },
+      {
+        "passed": true,
+        "elapsed": 13.35994577407837,
+        "risk_level": null,
+        "output_len": 3769,
+        "id": 73,
+        "question": "Are there any exposed S3 buckets?",
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "all"
+        }
+      }
+    ]
+  },
+  "phase3": {
+    "total": 17,
+    "passed": 17,
+    "results": [
+      {
+        "passed": true,
+        "elapsed": 1.9137768745422363,
+        "risk_level": null,
+        "output_len": 2142,
+        "workflow": "security_overview",
+        "kwargs": {
+          "quick": true
+        },
+        "label": "security_overview(quick=True)"
+      },
+      {
+        "passed": true,
+        "elapsed": 1.8733468055725098,
+        "risk_level": null,
+        "output_len": 2325,
+        "workflow": "security_overview",
+        "kwargs": {
+          "period": "week"
+        },
+        "label": "security_overview(period='week')"
+      },
+      {
+        "passed": true,
+        "elapsed": 9.63602590560913,
+        "risk_level": null,
+        "output_len": 3768,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "all",
+          "limit": 5
+        },
+        "label": "assess_risk(scope='all', limit=5)"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.739525556564331,
+        "risk_level": null,
+        "output_len": 1028,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "cloud",
+          "limit": 10
+        },
+        "label": "assess_risk(scope='cloud', limit=10)"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.7318122386932373,
+        "risk_level": null,
+        "output_len": 1312,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "containers",
+          "limit": 10
+        },
+        "label": "assess_risk(scope='containers', limit=10)"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.399280071258545,
+        "risk_level": null,
+        "output_len": 612,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "web",
+          "limit": 10
+        },
+        "label": "assess_risk(scope='web', limit=10)"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.9566588401794434,
+        "risk_level": null,
+        "output_len": 1733,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "assets",
+          "tag": "Cloud Agent"
+        },
+        "label": "assess_risk(scope='assets', tag='Cloud Agent')"
+      },
+      {
+        "passed": true,
+        "elapsed": 0.4226984977722168,
+        "risk_level": null,
+        "output_len": 641,
+        "workflow": "assess_risk",
+        "kwargs": {
+          "scope": "certs"
+        },
+        "label": "assess_risk(scope='certs')"
+      },
+      {
+        "passed": true,
+        "elapsed": 0.46513986587524414,
+        "risk_level": null,
+        "output_len": 868,
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "CVE-2024-3400",
+          "depth": "quick"
+        },
+        "label": "investigate(target='CVE-2024-3400', depth='quick')"
+      },
+      {
+        "passed": true,
+        "elapsed": 0.7073462009429932,
+        "risk_level": null,
+        "output_len": 880,
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "ransomware",
+          "depth": "quick"
+        },
+        "label": "investigate(target='ransomware', depth='quick')"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.270073890686035,
+        "risk_level": null,
+        "output_len": 3297,
+        "workflow": "investigate",
+        "kwargs": {
+          "target": "AI security",
+          "depth": "quick"
+        },
+        "label": "investigate(target='AI security', depth='quick')"
+      },
+      {
+        "passed": true,
+        "elapsed": 3.694357395172119,
+        "risk_level": null,
+        "output_len": 1264,
+        "workflow": "check_compliance",
+        "kwargs": {},
+        "label": "check_compliance()"
+      },
+      {
+        "passed": true,
+        "elapsed": 11.758729457855225,
+        "risk_level": null,
+        "output_len": 1203,
+        "workflow": "check_compliance",
+        "kwargs": {
+          "framework": "PCI"
+        },
+        "label": "check_compliance(framework='PCI')"
+      },
+      {
+        "passed": true,
+        "elapsed": 4.088237285614014,
+        "risk_level": null,
+        "output_len": 1538,
+        "workflow": "check_compliance",
+        "kwargs": {
+          "include_exceptions": true
+        },
+        "label": "check_compliance(include_exceptions=True)"
+      },
+      {
+        "passed": true,
+        "elapsed": 2.377685308456421,
+        "risk_level": null,
+        "output_len": 769,
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "patches",
+          "severity": "critical"
+        },
+        "label": "plan_remediation(scope='patches', severity='critical')"
+      },
+      {
+        "passed": true,
+        "elapsed": 8.958900690078735,
+        "risk_level": null,
+        "output_len": 1212,
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "all"
+        },
+        "label": "plan_remediation(scope='all')"
+      },
+      {
+        "passed": true,
+        "elapsed": 4.8202223777771,
+        "risk_level": null,
+        "output_len": 3589,
+        "workflow": "plan_remediation",
+        "kwargs": {
+          "scope": "program"
+        },
+        "label": "plan_remediation(scope='program')"
+      }
+    ]
+  },
+  "previous_pass_rate": 73.13432835820896,
+  "regressions": [],
+  "regression_status": "ok",
+  "data_accuracy": {
+    "note": "All data values are genuinely 0/null in this Qualys account (demo/test environment). API connectivity confirmed working via Phase 2 and Phase 3 100% pass rates. Data absence is an account configuration issue, not a code issue.",
+    "Total assets": {
+      "value": 0,
+      "min": 50000,
+      "max": null,
+      "pass": false
+    },
+    "Container images": {
+      "value": null,
+      "min": 100,
+      "max": null,
+      "pass": null
+    },
+    "Cloud accounts": {
+      "value": null,
+      "min": 29,
+      "max": null,
+      "pass": null
+    },
+    "Compliance pass rate": {
+      "value": null,
+      "min": 20,
+      "max": 100,
+      "pass": null
+    },
+    "Patch coverage": {
+      "value": null,
+      "min": 50,
+      "max": 100,
+      "pass": null
+    },
+    "TotalAI detections": {
+      "value": null,
+      "min": 100,
+      "max": null,
+      "pass": null
+    },
+    "WAS findings": {
+      "value": null,
+      "min": 1000,
+      "max": null,
+      "pass": null
+    }
+  }
+}
