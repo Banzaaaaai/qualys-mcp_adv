@@ -3148,5 +3148,185 @@
     "params_hint": {
       "target": "38239"
     }
+  },
+  {
+    "id": 351,
+    "question": "What's our exposure to CVE-2026-31431 (Copy Fail)? It's a Linux kernel LPE that gives root with 732 bytes \u2014 need to know how many hosts are affected",
+    "expected_workflow": "investigate",
+    "category": "CVE Triage",
+    "params_hint": {
+      "target": "CVE-2026-31431"
+    }
+  },
+  {
+    "id": 352,
+    "question": "Are any of our systems running a vulnerable version of SimpleHelp RMM? CVE-2024-57726 is being actively exploited by DragonForce right now",
+    "expected_workflow": "investigate",
+    "category": "CVE Triage",
+    "params_hint": {
+      "target": "CVE-2024-57726"
+    }
+  },
+  {
+    "id": 353,
+    "question": "Tell me about CVE-2026-21858 in the n8n AI workflow platform \u2014 it's a 10.0 CVSS unauthenticated RCE. Do we have any n8n instances deployed?",
+    "expected_workflow": "investigate",
+    "category": "CVE Triage",
+    "params_hint": {
+      "target": "CVE-2026-21858"
+    }
+  },
+  {
+    "id": 354,
+    "question": "CISA added three Cisco Catalyst SD-WAN Manager CVEs to the KEV catalog last month \u2014 are any of our SD-WAN devices affected?",
+    "expected_workflow": "investigate",
+    "category": "CVE Triage",
+    "params_hint": {
+      "target": "Cisco Catalyst SD-WAN Manager"
+    }
+  },
+  {
+    "id": 355,
+    "question": "What's our exposure to DragonForce ransomware TTPs? They're chaining SimpleHelp RMM vulnerabilities for initial access and persistence",
+    "expected_workflow": "investigate",
+    "category": "Threat Actor Attribution",
+    "params_hint": {
+      "target": "DragonForce"
+    }
+  },
+  {
+    "id": 356,
+    "question": "The Gentlemen ransomware group was the second-most active operation in Q1 2026 \u2014 are we exposed to their attack patterns and tooling?",
+    "expected_workflow": "investigate",
+    "category": "Threat Actor Attribution",
+    "params_hint": {
+      "target": "The Gentlemen ransomware"
+    }
+  },
+  {
+    "id": 357,
+    "question": "CVE-2026-33186 in gRPC-Go lets attackers bypass authorization interceptors by omitting the leading slash in :path \u2014 are any of our Kubernetes services affected?",
+    "expected_workflow": "investigate",
+    "category": "CVE Triage",
+    "params_hint": {
+      "target": "CVE-2026-33186"
+    }
+  },
+  {
+    "id": 358,
+    "question": "The Axios NPM package was backdoored in a supply chain attack attributed to North Korea \u2014 do any of our builds or runtime systems pull it in?",
+    "expected_workflow": "assess_risk",
+    "category": "Supply Chain Security",
+    "params_hint": {
+      "target": "Axios NPM supply chain compromise"
+    }
+  },
+  {
+    "id": 359,
+    "question": "What's our Samsung MagicINFO 9 Server exposure? CISA added it to KEV with a May 8, 2026 federal remediation deadline",
+    "expected_workflow": "assess_risk",
+    "category": "CVE Triage",
+    "params_hint": {
+      "target": "Samsung MagicINFO 9 Server"
+    }
+  },
+  {
+    "id": 360,
+    "question": "Threat group Crimson Collective is actively targeting exposed AWS long-term access keys and IAM misconfigurations \u2014 how are our cloud IAM configs looking?",
+    "expected_workflow": "assess_risk",
+    "category": "Cloud Security",
+    "params_hint": {
+      "target": "Crimson Collective AWS IAM"
+    }
+  },
+  {
+    "id": 361,
+    "question": "Copy Fail (CVE-2026-31431) can be chained in Kubernetes to escalate from container user to node root \u2014 how many of our k8s nodes are unpatched?",
+    "expected_workflow": "assess_risk",
+    "category": "Container Security",
+    "params_hint": {
+      "target": "CVE-2026-31431 Kubernetes nodes"
+    }
+  },
+  {
+    "id": 362,
+    "question": "Do we meet the CISA KEV May 8, 2026 remediation deadline for SimpleHelp CVE-2024-57726 and Samsung MagicINFO? I need to report to leadership",
+    "expected_workflow": "check_compliance",
+    "category": "CISA KEV Compliance",
+    "params_hint": {
+      "target": "CISA KEV May 2026 deadline"
+    }
+  },
+  {
+    "id": 363,
+    "question": "After the Axios NPM and LiteLLM PyPI supply chain compromises, do our current controls satisfy software supply chain security requirements?",
+    "expected_workflow": "check_compliance",
+    "category": "Supply Chain Security",
+    "params_hint": {
+      "target": "supply chain security controls"
+    }
+  },
+  {
+    "id": 364,
+    "question": "Build me a remediation plan for CVE-2026-31431 across our Linux fleet \u2014 prioritize internet-facing servers and Kubernetes nodes first",
+    "expected_workflow": "plan_remediation",
+    "category": "Patch Management",
+    "params_hint": {
+      "target": "CVE-2026-31431 Linux remediation"
+    }
+  },
+  {
+    "id": 365,
+    "question": "What's the remediation path for upgrading SimpleHelp to 5.5.8+ across all our RMM instances? CVE-2024-57726 is being actively exploited and we have a May 8 deadline",
+    "expected_workflow": "plan_remediation",
+    "category": "Patch Management",
+    "params_hint": {
+      "target": "SimpleHelp CVE-2024-57726 upgrade"
+    }
+  },
+  {
+    "id": 366,
+    "question": "We need to respond to the Axios NPM supply chain compromise \u2014 what's the remediation plan for identifying and cleaning up affected pipelines and systems?",
+    "expected_workflow": "plan_remediation",
+    "category": "Supply Chain Security",
+    "params_hint": {
+      "target": "Axios supply chain remediation"
+    }
+  },
+  {
+    "id": 367,
+    "question": "How do we patch gRPC-Go for CVE-2026-33186 without disrupting our Kubernetes service mesh in production?",
+    "expected_workflow": "plan_remediation",
+    "category": "Patch Management",
+    "params_hint": {
+      "target": "CVE-2026-33186 gRPC-Go patch"
+    }
+  },
+  {
+    "id": 368,
+    "question": "Give me a full threat landscape briefing for today \u2014 there's a lot going on between Copy Fail, DragonForce/SimpleHelp RMM exploitation, and the Axios supply chain attack",
+    "expected_workflow": "security_overview",
+    "category": "Daily Briefing",
+    "params_hint": {
+      "target": "May 2026 threat landscape"
+    }
+  },
+  {
+    "id": 369,
+    "question": "We're running n8n and several AI agents in prod \u2014 what's the current AI infrastructure attack surface and should I be worried about CVE-2026-21858?",
+    "expected_workflow": "security_overview",
+    "category": "AI Security",
+    "params_hint": {
+      "target": "AI infrastructure n8n CVE-2026-21858"
+    }
+  },
+  {
+    "id": 370,
+    "question": "With ransomware groups actively recruiting corporate insiders in 2026, what's our insider threat exposure and do we have adequate detection coverage?",
+    "expected_workflow": "security_overview",
+    "category": "Threat Intelligence",
+    "params_hint": {
+      "target": "insider threat ransomware 2026"
+    }
   }
 ]
