@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Complete inventory of known Qualys API endpoints. Used for gap analysis against api.py.",
-    "lastUpdated": "2026-04-30",
+    "lastUpdated": "2026-05-05",
     "sources": "Qualys docs crawl + manual verification + release notes + US2 live testing"
   },
   "modules": {
@@ -447,6 +447,19 @@
           "path": "/mtg/v1/jobs",
           "status": "implemented",
           "description": "MTG jobs list"
+        },
+        {
+          "method": "POST",
+          "path": "/pm/v1/remediation/insights",
+          "status": "implemented",
+          "description": "Patch remediation insights — vendor-acquired patches, isCustomizedDownloadUrl flag (PM 3.14)",
+          "source": "PM 3.14 release notes 2026-05-04"
+        },
+        {
+          "method": "POST",
+          "path": "/isl/v1/assets/isolation/{action}",
+          "status": "not_needed",
+          "description": "Bulk asset isolation/unisolation by tag or ID (write, PM 3.14)"
         }
       ]
     },

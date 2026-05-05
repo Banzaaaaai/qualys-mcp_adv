@@ -1906,6 +1906,7 @@ def outstanding_patches(platform: str = "", severity: str = "", top_n: int = 20,
     for p in platforms:
         tasks[p.lower()] = lambda _p=p: get_pm_patches(_p, status='Missing', page_size=50)
         tasks[f"{p.lower()}_count"] = lambda _p=p: get_pm_patches_count(_p, status='Missing')
+        tasks[f"{p.lower()}_insights"] = lambda _p=p: get_pm_remediation_insights(_p)
     concurrent = _run_concurrent(**tasks)
 
     all_patches = []
@@ -1964,6 +1965,15 @@ def outstanding_patches(platform: str = "", severity: str = "", top_n: int = 20,
             'kb': p.get('kb', ''),
         })
 
+    # Merge remediation insights (PM 3.14 — vendor-acquired patches, isCustomizedDownloadUrl)
+    vendor_acquired_count = 0
+    for p in platforms:
+        insights = concurrent.get(f"{p.lower()}_insights") or {}
+        if isinstance(insights, dict) and insights:
+            content = insights.get('content', insights.get('data', []))
+            if isinstance(content, list):
+                vendor_acquired_count += sum(1 for item in content if item.get('isCustomizedDownloadUrl'))
+
     total = real_total if real_total > len(all_patches) else len(all_patches)
     total_missing = sum(p.get('missingCount', 0) for p in all_patches)
     lines = [
@@ -1971,6 +1981,8 @@ def outstanding_patches(platform: str = "", severity: str = "", top_n: int = 20,
         f"Security: {security_count} | Non-security: {non_security_count}",
         f"Reboot required: {reboot_required_count}",
     ]
+    if vendor_acquired_count:
+        lines.append(f"Vendor-acquired patches: {vendor_acquired_count}")
     if sev_filter:
         lines.append(f"Filtered by severity: {sev_filter}")
     if platform:
@@ -1983,6 +1995,7 @@ def outstanding_patches(platform: str = "", severity: str = "", top_n: int = 20,
         'securityPatches': security_count,
         'nonSecurityPatches': non_security_count,
         'rebootRequired': reboot_required_count,
+        'vendorAcquiredPatches': vendor_acquired_count,
         'topPatches': formatted,
         'summary': '. '.join(lines) + '.',
     }

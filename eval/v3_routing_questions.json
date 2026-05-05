@@ -3148,5 +3148,35 @@
     "params_hint": {
       "target": "38239"
     }
+  },
+  {
+    "id": 351,
+    "question": "Show me patch remediation insights for Windows \u2014 which patches are vendor-acquired?",
+    "expected_workflow": "plan_remediation",
+    "category": "Patch Management",
+    "params_hint": {
+      "scope": "patches",
+      "platform": "Windows"
+    }
+  },
+  {
+    "id": 352,
+    "question": "Are any outstanding Windows patches delivered via customized vendor download URLs?",
+    "expected_workflow": "plan_remediation",
+    "category": "Patch Management",
+    "params_hint": {
+      "scope": "patches",
+      "platform": "Windows"
+    }
+  },
+  {
+    "id": 353,
+    "question": "How many vendor-acquired patches are missing on Linux systems?",
+    "expected_workflow": "plan_remediation",
+    "category": "Patch Management",
+    "params_hint": {
+      "scope": "patches",
+      "platform": "Linux"
+    }
   }
 ]
