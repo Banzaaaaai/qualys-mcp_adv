@@ -1507,26 +1507,10 @@ def get_pm_job_summary(job_id):
 
 
 def get_pm_remediation_insights(platform='Windows', page_size=50):
-    """Get patch remediation insights from PM — includes vendor-acquired patches and isCustomizedDownloadUrl flag (PM 3.14)."""
+    """Get patch remediation insights — vendor-acquired patches, isCustomizedDownloadUrl flag (PM 3.14)."""
     url = f"{GATEWAY_URL}/pm/v1/remediation/insights"
-    body = json.dumps({"platform": platform, "pageSize": page_size}).encode()
-    token = get_bearer_token()
-    from urllib.request import Request
-    req = Request(url, data=body, method='POST')
-    req.add_header('Authorization', f'Bearer {token}' if token else f'Basic {BASIC_AUTH}')
-    req.add_header('Content-Type', 'application/json')
-    req.add_header('Accept', 'application/json')
-    req.add_header('X-Requested-With', 'qualys-mcp')
-    try:
-        with _open(req, timeout=30) as resp:
-            raw = resp.read()
-            return json.loads(raw) if raw else {}
-    except HTTPError as e:
-        _log(f"PM remediation insights error {e.code}: {url}")
-        return {}
-    except Exception as e:
-        _log(f"PM remediation insights error: {e}")
-        return {}
+    result = _gateway_post(url, {"platform": platform, "pageSize": page_size}, timeout=30)
+    return result if result is not None else {}
 
 
 def get_mtg_jobs(platform='Windows', limit=10, status=None):
