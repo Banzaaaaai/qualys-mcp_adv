@@ -464,6 +464,49 @@ class TestRemediationSynthesisWithMockData:
         # The finding should mention QIDs with no mitigation
         assert any("mitigation" in item.get("finding", "").lower() for item in result)
 
+    def test_outstanding_patches_vendor_acquired_field_present(self):
+        """vendorAcquiredPatches key must always be present in outstanding_patches output (PM 3.14)."""
+        from unittest.mock import patch
+        import qualys.aggregators as agg
+
+        def fake_pm_patches(platform, status, page_size):
+            return [{"title": "KB001", "missingCount": 5, "isSecurity": True, "rebootRequired": False, "cve": []}]
+
+        def fake_pm_count(platform, status=None):
+            return {"count": 1}
+
+        def fake_pm_insights(platform):
+            return {"content": [{"isCustomizedDownloadUrl": True}, {"isCustomizedDownloadUrl": False}]}
+
+        with patch.object(agg, "get_pm_patches", side_effect=fake_pm_patches), \
+             patch.object(agg, "get_pm_patches_count", side_effect=fake_pm_count), \
+             patch.object(agg, "get_pm_remediation_insights", side_effect=fake_pm_insights):
+            result = agg.outstanding_patches(platform="Windows")
+
+        assert "vendorAcquiredPatches" in result
+        assert result["vendorAcquiredPatches"] == 1
+
+    def test_outstanding_patches_vendor_acquired_zero_when_no_insights(self):
+        """vendorAcquiredPatches is 0 when insights endpoint returns empty (graceful degradation)."""
+        from unittest.mock import patch
+        import qualys.aggregators as agg
+
+        def fake_pm_patches(platform, status, page_size):
+            return []
+
+        def fake_pm_count(platform, status=None):
+            return {"count": 0}
+
+        def fake_pm_insights(platform):
+            return {}
+
+        with patch.object(agg, "get_pm_patches", side_effect=fake_pm_patches), \
+             patch.object(agg, "get_pm_patches_count", side_effect=fake_pm_count), \
+             patch.object(agg, "get_pm_remediation_insights", side_effect=fake_pm_insights):
+            result = agg.outstanding_patches(platform="Windows")
+
+        assert result.get("vendorAcquiredPatches", 0) == 0
+
 
 # ===========================================================================
 # overview synthesis helpers with realistic data
