@@ -733,21 +733,22 @@
       }
     ]
   },
-  "previous_pass_rate": 76.11940298507463,
+  "previous_pass_rate": 73.13432835820896,
   "regressions": [
-    {
-      "type": "pass_rate",
-      "detail": "Pass rate dropped from 76.1% to 74.6%"
-    },
     {
       "type": "latency",
       "label": "assess_risk(scope='cloud', limit=10)",
-      "detail": "Response time regression on 'assess_risk(scope='cloud', limit=10)': 3.7s \u2192 8.7s"
+      "detail": "Response time regression on \"assess_risk(scope='cloud', limit=10)\": 4.0s -> 8.7s"
     },
     {
       "type": "latency",
-      "label": "investigate(target='CVE-2024-3400', depth='quick')",
-      "detail": "Response time regression on 'investigate(target='CVE-2024-3400', depth='quick')': 0.5s \u2192 0.8s"
+      "label": "investigate(target='ransomware', depth='quick')",
+      "detail": "Response time regression on \"investigate(target='ransomware', depth='quick')\": 0.5s -> 0.8s"
+    },
+    {
+      "type": "latency",
+      "label": "check_compliance(framework='PCI')",
+      "detail": "Response time regression on \"check_compliance(framework='PCI')\": 8.2s -> 13.0s"
     }
   ],
   "data_accuracy": {
@@ -793,5 +794,6 @@
       "max": null,
       "pass": null
     }
-  }
+  },
+  "previous_date": "2026-05-06"
 }
