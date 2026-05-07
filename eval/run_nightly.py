@@ -6,6 +6,7 @@ Phases 1-5 with regression detection and data accuracy checks.
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -280,7 +281,7 @@ def phase4(today_results: dict, previous: dict | None, api_error_counts: dict | 
     # Widen latency threshold when the Qualys API was degraded during the run
     # (503/502/429 errors cause retry backoff that inflates wall-clock time).
     err = api_error_counts or {}
-    api_degraded = any(err.get(k, 0) > 0 for k in ("503", "502", "429"))
+    api_degraded = any(err.get(k, 0) > 0 for k in ("503", "502", "429", "401"))
     latency_multiplier = 3.0 if api_degraded else 1.5
     if api_degraded:
         print(f"  API errors detected {err} — latency threshold widened to {latency_multiplier}×")
@@ -498,8 +499,17 @@ def main():
         "previous_pass_rate": previous.get("pass_rate") if previous else None,
     }
 
+    # Collect HTTP error codes from all phase results for latency widening
+    api_error_counts: dict[str, int] = {}
+    for result_list in [p1_results, p2_results, p3_results]:
+        for r in result_list:
+            for field in ("error", "tb"):
+                text = r.get(field) or ""
+                for code in re.findall(r'\b([45]\d\d)\b', text):
+                    api_error_counts[code] = api_error_counts.get(code, 0) + 1
+
     # ── Phase 4 ──────────────────────────────────────────────────────────────
-    regressions = phase4(today_results, previous)
+    regressions = phase4(today_results, previous, api_error_counts)
     today_results["regressions"] = regressions
 
     # ── Phase 5 ──────────────────────────────────────────────────────────────

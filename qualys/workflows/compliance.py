@@ -230,7 +230,7 @@ def check_compliance(
         detail=detail,
     )
 
-    results, elapsed_ms = _dispatch(plan, timeout=90)
+    results, elapsed_ms = _dispatch(plan)
 
     envelope = _build_envelope(
         workflow="check_compliance",
