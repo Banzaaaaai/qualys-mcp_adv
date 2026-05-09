@@ -1,0 +1,46 @@
+{
+  "date": "2026-05-09",
+  "pass_rate": 76.11940298507463,
+  "total": 67,
+  "passed": 51,
+  "failed": 16,
+  "phase1": {
+    "total": 20,
+    "passed": 4
+  },
+  "phase2": {
+    "total": 30,
+    "passed": 30
+  },
+  "phase3": {
+    "total": 17,
+    "passed": 17
+  },
+  "previous_pass_rate": 74.6268656716418,
+  "regressions": [
+    {
+      "type": "latency",
+      "label": "security_overview(quick=True)",
+      "detail": "Response time regression on 'security_overview(quick=True)': 2.1s → 6.0s"
+    },
+    {
+      "type": "latency",
+      "label": "check_compliance()",
+      "detail": "Response time regression on 'check_compliance()': 3.8s → 9.5s"
+    },
+    {
+      "type": "latency",
+      "label": "check_compliance(framework='PCI')",
+      "detail": "Response time regression on 'check_compliance(framework='PCI')': 8.5s → 13.8s"
+    }
+  ],
+  "data_accuracy": {
+    "Total assets": {"value": 0, "min": 50000, "max": null, "pass": false},
+    "Container images": {"value": null, "min": 100, "max": null, "pass": null},
+    "Cloud accounts": {"value": null, "min": 29, "max": null, "pass": null},
+    "Compliance pass rate": {"value": null, "min": 20, "max": 100, "pass": null},
+    "Patch coverage": {"value": null, "min": 50, "max": 100, "pass": null},
+    "TotalAI detections": {"value": null, "min": 100, "max": null, "pass": null},
+    "WAS findings": {"value": null, "min": 1000, "max": null, "pass": null}
+  }
+}
