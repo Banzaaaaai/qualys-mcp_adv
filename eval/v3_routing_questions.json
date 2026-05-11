@@ -1,10 +1,1 @@
-[
-  {
-    "id": 1,
-    "question": "Tell me everything about CVE-2024-3400 and our exposure",
-    "expected_workflow": "investigate",
-    "category": "CVE Triage",
-    "params_hint": {
-      "target": "CVE-2024-3400"
-    }
-  }]
+[\n  {\n    "id": 1,\n    "question": "Tell me everything about CVE-2024-3400 and our exposure",\n    "expected_workflow": "investigate",\n    "category": "CVE Triage",\n    "params_hint": {\n      "target": "CVE-2024-3400"\n    }\n  },\n  {\n    "id": 2,\n    "question": "How many assets are affected by CVE-2024-21887?",\n    "expected_workflow": "investigate",\n    "category": "CVE Triage",\n    "params_hint": {\n      "target": "CVE-2024-21887"\n    }\n  },\n  {\n    "id": 3,\n    "question": "What's the deal with CVE-2024-47575 in our environment?",\n    "expected_workflow": "investigate",\n    "category": "CVE Triage",\n    "params_hint": {\n      "target": "CVE-2024-47575"\n    }\n  }\n]
