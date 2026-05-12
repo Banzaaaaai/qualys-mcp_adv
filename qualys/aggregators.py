@@ -941,12 +941,11 @@ def investigate_cve_agg(cve: str, detail: str = "standard") -> dict:
                 result['summary']['assetsWithSoftware'] = best_count
 
     if qids:
+        need_fallback = False
         try:
             qids_set = set(qids)
             # Query all three severity buckets — QID severity is unknown at this point
-            # and each bucket is independently cached, so a single severity=3 call
-            # would miss detections at severity 4 and 5 if the API treats the
-            # parameter as an exact match rather than a minimum threshold.
+            # and each bucket is independently warmed up in cache
             all_dets = get_detections(severity=5) + get_detections(severity=4) + get_detections(severity=3)
             matched = [d for d in all_dets if d.get('qid') in qids_set]
             # Deduplicate by host_id so we count unique hosts, not detection records
@@ -963,7 +962,7 @@ def investigate_cve_agg(cve: str, detail: str = "standard") -> dict:
                         'hostname': d.get('dnsName', '') or d.get('hostname', '') or '',
                         'os': d.get('os', ''),
                     }
-                    for hid, d in list(seen_hosts.items())[:10]
+                    for hid, d in seen_hosts.items()
                 ]
                 host_count = len(seen_hosts)
                 result['affectedAssets'] = affected_list
@@ -975,8 +974,43 @@ def investigate_cve_agg(cve: str, detail: str = "standard") -> dict:
                     'hosts': affected_list,
                     'note': f'{host_count} unique hosts have confirmed detections for {cve} across {len(qids)} QID(s).',
                 }
-        except Exception:
-            pass
+            else:
+                _log(f"investigate_cve_agg: no cache matches for {cve} QIDs {qids} across all severity buckets — falling back to CVE detection endpoint")
+                need_fallback = True
+        except Exception as e:
+            _log(f"investigate_cve_agg: VMDR detection cache lookup failed for {cve} — {e}")
+            need_fallback = True
+
+        if need_fallback:
+            try:
+                cve_dets = get_cve_detections(cve_id=cve)
+                if cve_dets:
+                    seen_hosts_fb: dict = {}
+                    for d in cve_dets:
+                        hid = str(d.get('hostId') or '')
+                        if hid and hid not in seen_hosts_fb:
+                            seen_hosts_fb[hid] = d
+                    host_count = len(seen_hosts_fb)
+                    affected_list = [
+                        {
+                            'hostId': d.get('hostId', ''),
+                            'ip': d.get('ip', ''),
+                            'hostname': d.get('hostname', ''),
+                            'os': '',
+                        }
+                        for d in seen_hosts_fb.values()
+                    ]
+                    result['affectedAssets'] = affected_list
+                    result['detectionCount'] = host_count
+                    result['summary']['confirmedAffected'] = host_count
+                    result['confirmedHosts'] = {
+                        'searchedBy': f'{cve} via CVE detection endpoint (no cache match)',
+                        'hostCount': host_count,
+                        'hosts': affected_list,
+                        'note': f'{host_count} unique hosts have confirmed detections for {cve}.',
+                    }
+            except Exception as e2:
+                _log(f"investigate_cve_agg: CVE detection endpoint fallback also failed for {cve} — {e2}")
 
     followups = []
     asset_count = result.get('summary', {}).get('confirmedAffected', 0) or result.get('summary', {}).get('assetsWithSoftware', 0)

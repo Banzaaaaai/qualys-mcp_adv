@@ -2462,29 +2462,28 @@ def get_kb_v4(qids=None, cve=None, nocache=False, details='All', limit=100):
 # ---------------------------------------------------------------------------
 
 
-def get_cve_detections(cve_id, status='Active', days=90, limit=200):
+def get_cve_detections(cve_id, status='Active', days=90, limit=0):
     """Get host detections for a specific CVE using the v3 CVE detection endpoint.
 
     Queries /api/3.0/fo/asset/host/vm/cve_detection/ which provides a
-    CVE-centric view of detections (fixed in VM 10.38.2).
+    CVE-centric view of detections (fixed in VM 10.38.2). Paginates via
+    id_min (same pattern as get_detections) to retrieve all results.
 
     Returns list of dicts: [{cve, qid, host_id, ip, hostname, status, severity}].
     """
     after_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
-    url = (f"{BASE_URL}/api/3.0/fo/asset/host/vm/cve_detection/"
-           f"?action=list&cve_id={cve_id}&status={status}"
-           f"&vm_processed_after={after_date}&show_qds=1")
-    data = api_get(url, timeout=60, not_found_ok=False)
-    if not data:
-        return []
-    try:
+    base_url = (f"{BASE_URL}/api/3.0/fo/asset/host/vm/cve_detection/"
+                f"?action=list&cve_id={cve_id}&status={status}"
+                f"&vm_processed_after={after_date}&show_qds=1")
+
+    def _parse_page(data):
         root = ET.fromstring(data)
-        results = []
+        records = []
         for host in root.findall('.//HOST'):
             host_id = host.findtext('ID', '')
             ip = host.findtext('IP', '')
             hostname = host.findtext('DNS', '') or host.findtext('HOSTNAME', '')
-            for det in host.findall('.//DETECTION')[:limit]:
+            for det in host.findall('.//DETECTION'):
                 qid = det.findtext('QID', '')
                 sev = det.findtext('SEVERITY', '')
                 det_status = det.findtext('STATUS', status)
@@ -2492,7 +2491,7 @@ def get_cve_detections(cve_id, status='Active', days=90, limit=200):
                 last_found = det.findtext('LAST_FOUND_DATETIME', '')
                 qds_el = det.find('QDS')
                 qds = int(qds_el.text) if qds_el is not None and qds_el.text else None
-                results.append({
+                records.append({
                     'cve': cve_id,
                     'qid': safe_int(qid) if qid else None,
                     'hostId': safe_int(host_id) if host_id else None,
@@ -2504,13 +2503,39 @@ def get_cve_detections(cve_id, status='Active', days=90, limit=200):
                     'firstFound': first_found,
                     'lastFound': last_found,
                 })
-                if len(results) >= limit:
-                    break
-            if len(results) >= limit:
+        response_code = root.findtext('.//RESPONSE/CODE') or root.findtext('.//CODE') or ''
+        is_truncated = response_code == '1980'
+        max_host_id = 0
+        if is_truncated and records:
+            max_host_id = max((r['hostId'] or 0) for r in records)
+        return records, is_truncated, max_host_id
+
+    all_results = []
+    id_min = 0
+    max_page_cap = MAX_PAGES if MAX_PAGES > 0 else 0
+    pages = 0
+    try:
+        while True:
+            if max_page_cap > 0 and pages >= max_page_cap:
+                _log(f"get_cve_detections: hit MAX_PAGES cap ({max_page_cap}) for {cve_id}")
                 break
-        return results
+            url = base_url
+            if id_min > 0:
+                url += f"&id_min={id_min}"
+            data = api_get(url, timeout=60, not_found_ok=False)
+            if not data:
+                break
+            records, is_truncated, max_host_id = _parse_page(data)
+            all_results.extend(records)
+            pages += 1
+            if not is_truncated or max_host_id == 0:
+                break
+            id_min = max_host_id + 1
+        if pages > 1:
+            _log(f"get_cve_detections: fetched {len(all_results)} records across {pages} pages for {cve_id}")
     except ET.ParseError:
         return []
+    return all_results[:limit] if limit > 0 else all_results
 
 
 # ---------------------------------------------------------------------------
