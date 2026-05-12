@@ -6267,3 +6267,67 @@ def dynamic_search_lists_agg(limit: int = 50, detail: str = "standard") -> dict:
     }
     return _apply_detail_level(_with_meta(result, 'searchLists', len(lists)), detail,
                                list_keys=['searchLists'])
+
+
+# ---------------------------------------------------------------------------
+# TotalCloud v1 resource endpoints — AWS/Azure (TC 2.24)
+# ---------------------------------------------------------------------------
+
+def cloud_resources_v1_agg(
+    provider: str = 'aws',
+    resource_type: str = 'EC2_INSTANCE',
+    limit: int = 50,
+    detail: str = 'standard',
+) -> dict:
+    """List cloud resources via TotalCloud v1 API (AWS/Azure).
+
+    TC 2.24 extended this path to support AWS Workspaces Personal/Directories/Pools
+    and Azure Virtual Machine Scale Sets with their instances.
+    """
+    data = get_cloud_resources_v1(provider=provider, resource_type=resource_type, page_size=limit)
+    content = data.get('content', [])
+    total = data.get('totalHits', len(content))
+
+    resources = []
+    for r in content[:limit]:
+        resources.append({
+            'resourceId': r.get('resourceId', ''),
+            'name': r.get('name', r.get('resourceId', '')[:40]),
+            'region': r.get('region', ''),
+            'uuid': r.get('uuid', ''),
+            'criticality': r.get('criticality', ''),
+            'evaluatedOn': r.get('evaluatedOn', ''),
+            'connectorId': r.get('connectorId', ''),
+        })
+
+    result = {
+        'resources': resources,
+        'totalResources': total,
+        'provider': provider.upper(),
+        'resourceType': resource_type,
+        'summary': f"{total} {provider.upper()} {resource_type.lower()} resource(s) found",
+    }
+    return _apply_detail_level(_with_meta(result, 'resources', total), detail, list_keys=['resources'])
+
+
+# ---------------------------------------------------------------------------
+# VMware NSX Authentication Records (VM 10.38.3)
+# ---------------------------------------------------------------------------
+
+def nsx_auth_agg(limit: int = 50, detail: str = 'standard') -> dict:
+    """List VMware NSX authentication records — v3 with AD + HashiCorp Vault support (VM 10.38.3)."""
+    records = get_nsx_auth_records(limit=limit)
+
+    if not records:
+        return {
+            'records': [],
+            'summary': 'No NSX authentication records found or NSX not configured on this subscription',
+            '_meta': {'returned': 0, 'total': 0, 'truncated': False},
+        }
+
+    result = {
+        'records': records[:limit],
+        'totalRecords': len(records),
+        'summary': f"{len(records)} NSX authentication record(s) configured",
+    }
+    return _apply_detail_level(_with_meta(result, 'records', len(records)), detail, list_keys=['records'])
