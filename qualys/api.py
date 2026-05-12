@@ -2059,6 +2059,18 @@ def get_cloud_resources_v2(provider, resource_type, page_size=50):
         return {'content': [], 'totalHits': 0}
 
 
+def get_cloud_resources_v1(provider: str, resource_type: str, page_size: int = 50) -> dict:
+    """Get cloud resources via v1 API (AWS/Azure) — includes Workspaces and VM Scale Set types (TC 2.24)."""
+    url = f"{GATEWAY_URL}/cloudview-api/rest/v1/resource/{resource_type}/{provider}?pageSize={page_size}"
+    data = api_get(url, gateway=True, not_found_ok=True)
+    if data is None:
+        return {'content': [], 'totalHits': 0}
+    try:
+        return json.loads(data)
+    except (json.JSONDecodeError, TypeError):
+        return {'content': [], 'totalHits': 0}
+
+
 def get_cloud_eval_resources(provider, page_size=50):
     """Get cloud evaluation resources via v1 API."""
     url = f"{GATEWAY_URL}/cloudview-api/rest/v1/{provider}/evaluations/resources?pageSize={page_size}"
@@ -2414,6 +2426,29 @@ def get_olvm_auth_records(limit=50):
         if isinstance(records, dict):
             records = [records]
         return records
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def get_nsx_auth_records(limit: int = 50) -> list:
+    """List VMware NSX auth records via v3 API — AD + HashiCorp Vault support (VM 10.38.3)."""
+    url = (f"{BASE_URL}/api/3.0/fo/auth/nsx"
+           f"?action=list&output_format=JSON&truncation_limit={limit}")
+    data = api_get(url, timeout=20, not_found_ok=True)
+    if data is None:
+        return []
+    try:
+        parsed = json.loads(data)
+        if not isinstance(parsed, dict):
+            return parsed if isinstance(parsed, list) else []
+        for key in ('NSX_AUTH_LIST', 'NSX_LIST', 'AUTHENTICATION_RECORD_LIST'):
+            val = parsed.get(key)
+            if val is not None:
+                records = val.get('RECORD', val.get('NSX_RECORD', val)) if isinstance(val, dict) else val
+                if isinstance(records, dict):
+                    records = [records]
+                return records if isinstance(records, list) else []
+        return []
     except (json.JSONDecodeError, TypeError):
         return []
 
