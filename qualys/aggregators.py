@@ -943,7 +943,11 @@ def investigate_cve_agg(cve: str, detail: str = "standard") -> dict:
     if qids:
         try:
             qids_set = set(qids)
-            all_dets = get_detections(severity=3)
+            # Query all three severity buckets — QID severity is unknown at this point
+            # and each bucket is independently cached, so a single severity=3 call
+            # would miss detections at severity 4 and 5 if the API treats the
+            # parameter as an exact match rather than a minimum threshold.
+            all_dets = get_detections(severity=5) + get_detections(severity=4) + get_detections(severity=3)
             matched = [d for d in all_dets if d.get('qid') in qids_set]
             # Deduplicate by host_id so we count unique hosts, not detection records
             seen_hosts: dict = {}
