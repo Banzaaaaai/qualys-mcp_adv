@@ -14,7 +14,7 @@ import traceback
 from datetime import datetime, date
 from pathlib import Path
 
-# ── env ──────────────────────────────────────────────────────────────────────
+# ── env ────────────────────────────────────────────────────────────────────────────
 # Credentials MUST come from environment or .env file — never hardcode here.
 for _var in ("QUALYS_USERNAME", "QUALYS_PASSWORD"):
     if _var not in os.environ:
@@ -28,8 +28,9 @@ from qualys.workflows.assess_risk import assess_risk
 from qualys.workflows.investigate import investigate
 from qualys.workflows.compliance import check_compliance
 from qualys.workflows.remediation import plan_remediation
+from qualys.api import get_api_error_counts, reset_api_error_counts
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# ── helpers ─────────────────────────────────────────────────────────────────────────────
 
 def load_questions():
     p = ROOT / "eval" / "v3_routing_questions.json"
@@ -127,15 +128,23 @@ def call_workflow(name: str, kwargs: dict, timeout: int = 180) -> dict:
         elapsed = time.time() - t0
         return {"passed": False, "elapsed": elapsed, "error": str(e), "tb": traceback.format_exc()[-500:]}
 
-# ── Phase 1: MCP Headless ─────────────────────────────────────────────────────
+# ── Phase 1: MCP Headless ─────────────────────────────────────────────────────────────────────────────
+
+# Stable fixture: 4 questions per workflow, chosen from the lowest IDs.
+# Using a fixed list prevents sampling drift when the question bank grows.
+_PHASE1_FIXTURE_IDS = [1, 3, 7, 12, 61, 63, 66, 70, 120, 125, 130, 135, 180, 185, 190, 195, 240, 245, 250, 255]
 
 def phase1(questions, n=20):
     print(f"\n{'='*60}")
     print("PHASE 1 — MCP Headless (20 questions via claude CLI)")
     print('='*60)
 
-    random.seed(42)
-    sample = random.sample(questions, n)
+    by_id = {q["id"]: q for q in questions}
+    sample = [by_id[qid] for qid in _PHASE1_FIXTURE_IDS if qid in by_id]
+    # Fall back to random sampling only if fixture IDs are missing (new install)
+    if len(sample) < n:
+        random.seed(42)
+        sample = random.sample(questions, n)
     results = []
 
     for i, q in enumerate(sample, 1):
@@ -152,7 +161,7 @@ def phase1(questions, n=20):
     print(f"\n  Phase 1 result: {passed}/{n} passed ({100*passed/n:.0f}%)")
     return results
 
-# ── Phase 2: Direct Function ──────────────────────────────────────────────────
+# ── Phase 2: Direct Function ────────────────────────────────────────────────────────────────────────────
 
 def phase2(questions, n=30):
     print(f"\n{'='*60}")
@@ -210,7 +219,7 @@ def phase2(questions, n=30):
     print(f"\n  Phase 2 result: {passed}/{n} passed ({100*passed/n:.0f}%)")
     return results
 
-# ── Phase 3: Customer Simulation ─────────────────────────────────────────────
+# ── Phase 3: Customer Simulation ───────────────────────────────────────────────────────────────────────────
 
 PHASE3_CASES = [
     ("security_overview", {"quick": True}),
@@ -254,7 +263,7 @@ def phase3():
     print(f"\n  Phase 3 result: {passed}/17 passed ({100*passed/17:.0f}%)")
     return results
 
-# ── Phase 4: Regression Check ─────────────────────────────────────────────────
+# ── Phase 4: Regression Check ─────────────────────────────────────────────────────────────────────────────
 
 def phase4(today_results: dict, previous: dict | None, api_error_counts: dict | None = None):
     print(f"\n{'='*60}")
@@ -335,7 +344,7 @@ def phase4(today_results: dict, previous: dict | None, api_error_counts: dict | 
 
     return regressions
 
-# ── Phase 5: Data Accuracy ────────────────────────────────────────────────────
+# ── Phase 5: Data Accuracy ────────────────────────────────────────────────────────────────────────────
 
 def phase5():
     print(f"\n{'='*60}")
@@ -446,13 +455,15 @@ def phase5():
 
     return checks, combined
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────────────────
 
 def main():
     print("\n" + "="*60)
     print("QUALYS MCP NIGHTLY REGRESSION TEST")
     print(f"Date: {date.today().isoformat()}")
     print("="*60)
+
+    reset_api_error_counts()
 
     results_dir = ROOT / "eval_results"
     results_dir.mkdir(exist_ok=True)
@@ -466,19 +477,19 @@ def main():
     else:
         print("No previous results found (baseline run)")
 
-    # ── Phase 1 ──────────────────────────────────────────────────────────────
+    # ── Phase 1 ──────────────────────────────────────────────────────────────────────────────
     p1_results = phase1(questions, n=20)
     p1_passed = sum(1 for r in p1_results if r["passed"])
 
-    # ── Phase 2 ──────────────────────────────────────────────────────────────
+    # ── Phase 2 ────────────────────────────────────────────────────────────────────────────
     p2_results = phase2(questions, n=30)
     p2_passed = sum(1 for r in p2_results if r["passed"])
 
-    # ── Phase 3 ──────────────────────────────────────────────────────────────
+    # ── Phase 3 ────────────────────────────────────────────────────────────────────────────
     p3_results = phase3()
     p3_passed = sum(1 for r in p3_results if r["passed"])
 
-    # ── Totals ────────────────────────────────────────────────────────────────
+    # ── Totals ─────────────────────────────────────────────────────────────────────────────
     total = 20 + 30 + 17
     passed = p1_passed + p2_passed + p3_passed
     pass_rate = 100 * passed / total
@@ -499,7 +510,10 @@ def main():
         "previous_pass_rate": previous.get("pass_rate") if previous else None,
     }
 
-    # Collect HTTP error codes from all phase results for latency widening
+    # Collect HTTP error codes from all phase results for latency widening.
+    # Also merge API-level counters: 401 gateway errors are retried transparently
+    # inside the API client and never surface in result error/tb fields, so
+    # scanning those fields alone misses them (bugs #224, #226).
     api_error_counts: dict[str, int] = {}
     for result_list in [p1_results, p2_results, p3_results]:
         for r in result_list:
@@ -508,20 +522,25 @@ def main():
                 for code in re.findall(r'\b([45]\d\d)\b', text):
                     api_error_counts[code] = api_error_counts.get(code, 0) + 1
 
-    # ── Phase 4 ──────────────────────────────────────────────────────────────
+    for k, v in get_api_error_counts().items():
+        if v > 0:
+            mapped = "401" if k == "401_gw" else k
+            api_error_counts[mapped] = api_error_counts.get(mapped, 0) + v
+
+    # ── Phase 4 ────────────────────────────────────────────────────────────────────────────
     regressions = phase4(today_results, previous, api_error_counts)
     today_results["regressions"] = regressions
 
-    # ── Phase 5 ──────────────────────────────────────────────────────────────
+    # ── Phase 5 ────────────────────────────────────────────────────────────────────────────
     data_accuracy, raw_data = phase5()
     today_results["data_accuracy"] = data_accuracy
 
-    # ── Save results ──────────────────────────────────────────────────────────
+    # ── Save results ────────────────────────────────────────────────────────────────────────────
     out_path = results_dir / f"nightly_{date.today().isoformat()}.json"
     out_path.write_text(json.dumps(today_results, indent=2, default=str))
     print(f"\nResults saved to {out_path}")
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # ── Summary ─────────────────────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     print("SUMMARY")
     print('='*60)
