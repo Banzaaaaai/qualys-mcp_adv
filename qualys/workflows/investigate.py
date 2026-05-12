@@ -158,15 +158,34 @@ def _build_plan(
         edr_events,
         fim_events,
         totalai_summary,
+        nsx_auth_agg,
+        cloud_resources_v1_agg,
     )
 
     AI_KEYWORDS = {"ai", "llm", "gpt", "totalai", "jailbreak", "owasp llm", "model detection", "ai security", "ai risk", "ai vulnerability"}
+    NSX_KEYWORDS = {"nsx", "nsx-t", "nsx-v", "vmware nsx"}
+    WORKSPACE_KEYWORDS = {"workspace", "workspaces personal", "workspaces directory", "workspaces pool", "aws workspace"}
+    VMSS_KEYWORDS = {"vmss", "vm scale set", "virtual machine scale set", "scale set", "azure vmss"}
 
     plan: dict[str, Any] = {}
     has_investigate_agg = False
 
     if any(kw in target.lower() for kw in AI_KEYWORDS):
         plan["totalai"] = lambda: totalai_summary(detail=detail)
+
+    if any(kw in target.lower() for kw in NSX_KEYWORDS):
+        plan["nsx_auth"] = lambda: nsx_auth_agg(limit=limit, detail=detail)
+
+    if any(kw in target.lower() for kw in WORKSPACE_KEYWORDS):
+        for _rt in ("WORKSPACES_PERSONAL", "WORKSPACES_DIRECTORY", "WORKSPACES_POOL"):
+            plan[f"aws_{_rt.lower()}"] = lambda _rt=_rt: cloud_resources_v1_agg(
+                provider="aws", resource_type=_rt, limit=limit, detail=detail
+            )
+
+    if any(kw in target.lower() for kw in VMSS_KEYWORDS):
+        plan["azure_vmss"] = lambda: cloud_resources_v1_agg(
+            provider="azure", resource_type="VIRTUAL_MACHINE_SCALE_SET", limit=limit, detail=detail
+        )
 
     if target_type == "cve":
         plan["cve_deep"] = lambda: investigate_cve_agg(target, detail=detail)
