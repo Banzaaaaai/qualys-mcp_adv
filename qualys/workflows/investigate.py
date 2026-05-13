@@ -287,7 +287,12 @@ def _summarize(data: dict) -> str:
         ransomware = cve_deep.get("ransomware", False)
         patch = cve_deep.get("patchAvailable", False)
         summary_inner = cve_deep.get("summary", {})
-        asset_count = summary_inner.get("assetsWithSoftware", 0) if isinstance(summary_inner, dict) else 0
+        if isinstance(summary_inner, dict):
+            confirmed = summary_inner.get("confirmedAffected", 0)
+            software_exposed = summary_inner.get("assetsWithSoftware", 0)
+        else:
+            confirmed = 0
+            software_exposed = 0
 
         desc = f"{cve_id}"
         if title:
@@ -297,8 +302,10 @@ def _summarize(data: dict) -> str:
             desc += ", linked to ransomware"
         if patch:
             desc += ", patch available"
-        if asset_count:
-            desc += f", {asset_count} potentially affected assets"
+        if confirmed:
+            desc += f", {confirmed} confirmed affected assets"
+        elif software_exposed:
+            desc += f", {software_exposed} potentially affected assets"
         parts.append(desc)
 
     threat_actor = data.get("threat_actor") or {}
