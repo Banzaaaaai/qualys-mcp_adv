@@ -1,0 +1,220 @@
+{
+  "date": "2026-05-14",
+  "pass_rate": 83.58208955223881,
+  "total": 67,
+  "passed": 56,
+  "failed": 11,
+  "phase1": {
+    "total": 20,
+    "passed": 9,
+    "results": [
+      {
+        "passed": true,
+        "elapsed": 49.003300189971924,
+        "output": "Here's the full picture on CVE-2024-3400 combining threat intelligence with your Qualys environment data.\n\n---\n\n## CVE-2024-3400 — Palo Alto Networks PAN-OS Command Injection\n\n### What it is\n\n**CVSS: 10.0 (Critical)** | Disclosed: April 12, 2024 | CISA KEV: Yes\n\nA critical OS command injection vulnerability in the **GlobalProtect gateway** of Palo Alto Networks PAN-OS. An unauthenticated remote attacker can execute arbitrary commands as root by crafting a malicious session ID cookie in two sequential HTTP requests — no credentials or user interaction required.\n\n**Affected versions:**\n- PAN-OS 10.2.x (< 10.2.9-h1)\n- PAN-OS 11.0.x (< 11.0.4-h1)\n- PAN-OS 11.1.x (< 11.1.2-h3)\n\n**Prerequisite:** GlobalProtect gateway (or portal) must be enabled with device telemetry enabled. Prisma Access is not affected.\n\n### Active Exploitation\n\nThis was actively exploited as a **zero-day** before patches were released:\n- **Threat actor:** UTA0218 (assessed as a nation-state actor)\n- **Operation:** \"MidnightEclipse\" — targeted government, critical infrastructure, and telecom organizations\n- **Attack chain:** Exploited to deploy a Python backdoor (`UPSTYLE`), establish reverse shells, exfiltrate VPN credentials, and pivot laterally into internal networks\n- **Exploitation began:** ~March 26, 2024 — roughly 2.5 weeks before public disclosure\n\n### Qualys Findings — Your Environment\n\n| Metric | Result |\n|---|---|\n| QDS (Qualys Detection Score) | 0 (not detected in KB) |\n| Assets with vulnerable software | 0 |\n| Total scanned assets | 0 |\n| Cloud connectors | None configured |\n| Container agents reporting | None |\n\n**Interpretation:** Qualys returned no asset data for this CVE, which means one of two things:\n\n1. **No Palo Alto GlobalProtect assets are in scope** — your environment genuinely doesn't run PAN-OS, or those devices aren't enrolled in Qualys scanning (firewalls often aren't).\n2. **Qualys coverage gap** — network appliances like Palo Alto firewalls require authenticated scanning or",
+        "id": 1,
+        "question": "Tell me everything about CVE-2024-3400 and our exposure",
+        "expected": "investigate"
+      },
+      {
+        "passed": true,
+        "elapsed": 27.930326223373413,
+        "output": "Qualys returned a near-empty result for CVE-2024-47575 — severity 0, QDS 0, no QIDs, no affected assets found. A few possible explanations:\n\n1. **No FortiManager assets in scope** — CVE-2024-47575 (\"FortiJump\") is a critical unauthenticated RCE in **Fortinet FortiManager** (CVSS 9.8, actively exploited in the wild as of Oct 2024). If your Qualys scan scope doesn't include any FortiManager appliances, there's nothing to detect.\n\n2. **No Qualys QID yet for this CVE** — Qualys may not have released a detection signature (QID) for it, which would show up as zero results even if vulnerable assets exist.\n\nHere's what you should know about the vuln itself:\n\n| Attribute | Detail |\n|---|---|\n| CVE | CVE-2024-47575 |\n| Nickname | \"FortiJump\" |\n| Product | Fortinet FortiManager |\n| CVSS | 9.8 (Critical) |\n| Type | Missing auth check in `fgfmsd` daemon |\n| Impact | Unauthenticated remote code execution; attacker can register rogue devices and push configs |\n| Exploitation | Actively exploited in the wild (CISA KEV listed) |\n| Affected versions | FortiManager 7.x, 6.x, and several older branches |\n| Fix | Patch available from Fortinet (FortiManager 7.6.1+, 7.4.5+, 7.2.8+, etc.) |\n\n**Recommended next steps:**\n\n1. **Check if you run FortiManager** — if yes, confirm it's in your Qualys scan scope.\n2. **Verify QID coverage** — search the Qualys KB for \"FortiManager\" or \"FortiJump\" to see if a detection exists.\n3. **Check Fortinet directly** — FortiManager admins should run `get system status` and compare against Fortinet's advisory version list.\n4. **Network mitigations** — if unpatched, restrict port 541 (FGFM) to trusted IPs only at the firewall level.\n\nWant me to run a broader asset or software search to check if FortiManager shows up anywhere in your environment?\n",
+        "id": 3,
+        "question": "What's the deal with CVE-2024-47575 in our environment?",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 37.269129276275635,
+        "output": "Error: Reached max turns (4)",
+        "id": 7,
+        "question": "Are any of our Cisco IOS XE devices hit by CVE-2023-20198?",
+        "expected": "investigate"
+      },
+      {
+        "passed": false,
+        "elapsed": 45.8343391418457,
+        "output": "Error: Reached max turns (4)",
+        "id": 12,
+        "question": "Which vulns have a QDS above 90?",
+        "expected": "investigate"
+      },
+      {
+        "passed": true,
+        "elapsed": 15.827622413635254,
+        "output": "Your Qualys environment is currently returning **0 total assets**, which means there's no TruRisk score to report — the platform has no asset data to calculate risk from.\n\nA few possible reasons:\n\n- **No scans have been run yet** — assets need to be discovered and scanned before a TruRisk score is generated.\n- **Connector/scanner not configured** — if you're using cloud connectors (AWS, Azure, GCP) or virtual scanners, they may not be set up or activated.\n- **Permissions** — the API credentials in use may not have visibility into the asset inventory.\n\nAlso noted: no compliance frameworks are configured, so regulatory risk (PCI DSS, HIPAA, CIS, etc.) is unassessed.\n\nWould you like help diagnosing why assets aren't showing up, or checking scan/scanner status?\n",
+        "id": 61,
+        "question": "What's our overall TruRisk score?",
+        "expected": "assess_risk"
+      },
+      {
+        "passed": true,
+        "elapsed": 33.21996235847473,
+        "output": "The Qualys environment returned no asset data to break down. Here's what the assessment found across all modules:\n\n| Module | Status |\n|--------|--------|\n| **TruRisk Score** | 0 assets — avg TruRisk: 0 |\n| **VM / Weekly Priorities** | 0 assets at any risk tier |\n| **Cloud (AWS/Azure/GCP)** | No cloud connectors configured |\n| **Containers** | Module licensed, but no agents reporting |\n| **Web Apps (WAS)** | No vulnerabilities / no scanned apps |\n| **Certificates (CertView)** | No certificates found |\n| **SaaS DR** | Not enabled on this subscription |\n\n**Why no business unit breakdown is available:**\n\nThere are no scanned assets in the environment yet. A tag-based TruRisk breakdown by business unit requires:\n\n1. **Assets scanned** — run VM scans or deploy Cloud Agents so hosts appear in the asset inventory.\n2. **Tags applied** — assign Qualys tags (e.g., `BU:Finance`, `BU:Engineering`) to those assets, either manually, via dynamic tag rules, or via asset group assignment.\n3. **Re-run this breakdown** — once assets are tagged, `assess_risk` with `breakdown_by=tag` will show TruRisk per business unit.\n\nOne gap also flagged: no compliance framework (CIS, PCI DSS, HIPAA, SOC 2) is configured, so regulatory risk is currently unassessed. Would you like help setting up scans, tagging assets, or configuring compliance frameworks?\n",
+        "id": 63,
+        "question": "Break down TruRisk by business unit",
+        "expected": "assess_risk"
+      },
+      {
+        "passed": true,
+        "elapsed": 39.41178846359253,
+        "output": "Both queries returned 0 assets for the `Production` and `Dev` tags, which means Qualys likely doesn't have assets tagged with those exact names. Here's a summary of what came back:\n\n| Metric | Production | Dev |\n|---|---|---|\n| **Avg TruRisk** | 0 | 0 |\n| **Total Assets** | 0 | 0 |\n| **Critical (>900)** | 0 | 0 |\n| **High (>700)** | 0 | 0 |\n| **Elevated (>500)** | 0 | 0 |\n| **EOL Systems** | 0 | 0 |\n| **Trend (30d)** | Stable | Stable |\n\nThe zero results are almost certainly a **tag naming mismatch** rather than genuinely empty environments. A few things to check:\n\n- **Tag casing/spelling** — Qualys tags are case-sensitive. The actual tags might be `production`, `PRODUCTION`, `Prod`, `prod`, `Development`, `development`, etc.\n- **No tags assigned** — Assets may not be tagged at all yet.\n\nTo find the exact tag names in use, try asking: *\"What asset tags exist in Qualys?\"* or *\"Show me all assets\"* — I can then re-run this comparison with the correct tag names.\n",
+        "id": 66,
+        "question": "What's the TruRisk for our Production environment vs Dev?",
+        "expected": "assess_risk"
+      },
+      {
+        "passed": true,
+        "elapsed": 19.515069246292114,
+        "output": "Looks like your Qualys environment is coming up empty across the board:\n\n- **0 assets** discovered (no Windows, Linux, macOS, AWS, Azure, GCP, or on-prem)\n- **0 scanners** online or offline\n- **0 scans** running, queued, or scheduled\n\nThis typically means one of a few things:\n\n1. **Qualys isn't fully configured yet** — no scanners deployed, no asset groups defined, and no scans scheduled\n2. **Credentials/subscription issue** — the API is responding but not returning data\n3. **Fresh environment** — just set up and nothing has been scanned yet\n\nOne gap flagged: no compliance frameworks are configured (CIS, PCI DSS, HIPAA, etc.), so regulatory posture is unassessed.\n\nWant me to dig into a specific area — compliance posture, risk assessment, or help figure out why no assets are showing up?\n",
+        "id": 70,
+        "question": "hey what's going on with our cloud security",
+        "expected": "assess_risk"
+      },
+      {
+        "passed": false,
+        "elapsed": 14.489567518234253,
+        "output": "Error: Reached max turns (4)",
+        "id": 120,
+        "question": "What's our patch coverage percentage?",
+        "expected": "plan_remediation"
+      },
+      {
+        "passed": false,
+        "elapsed": 44.378055810928345,
+        "output": "The Qualys environment is connected but has **no scanned assets** to report on. Here's what the data shows:\n\n| Area | Status |\n|---|---|\n| Total Assets | 0 (none inventoried) |\n| VM / Patch findings | No data |\n| Cloud (AWS/Azure/GCP) | No connectors configured |\n| Containers | Module licensed, no agents reporting |\n| Web Applications | No scans run |\n| Certificates | None found |\n| Scheduled Scans | None configured |\n\n**Why this is happening — likely causes:**\n\n1. **No scanners deployed** — No Qualys Virtual/Cloud Scanners or agents have checked in yet.\n2. **No scan jobs configured** — Even if scanners exist, no scheduled scans have been set up to discover and assess assets.\n3. **No cloud connectors** — AWS, Azure, or GCP accounts haven't been linked to pull cloud asset inventory.\n4. **Agents not reporting** — If Qualys agents are installed on hosts, they may not be activated or communicating with the platform.\n\n**Next steps to get patch gap data:**\n\n- Deploy Qualys Cloud Agents or a Virtual Scanner appliance on your network.\n- Configure an Asset Group and run a Vulnerability Scan (VM module).\n- For cloud environments, add cloud connectors under TotalCloud.\n- Once assets appear, re-run this query and you'll see missing critical patches ranked by TruRisk score and severity.\n",
+        "id": 125,
+        "question": "What critical patches are missing across the environment?",
+        "expected": "plan_remediation"
+      },
+      {
+        "passed": true,
+        "elapsed": 18.306635856628418,
+        "output": "The Qualys environment is returning 0 assets, which means there's no inventory data to assess patching SLA against. A few possible reasons:\n\n1. **No assets have been onboarded** — the Qualys subscription may not have any hosts/agents configured yet.\n2. **API credentials are scoped too narrowly** — the API key may not have permission to see asset data.\n3. **Wrong subscription/environment** — the MCP may be pointed at a non-production or empty tenant.\n\nTo actually answer the patching SLA question, you'd need:\n- Assets registered and scanned in Qualys VM\n- Vulnerability findings with detection dates (so age can be calculated against your SLA window, e.g. \"critical vulns patched within 15 days\")\n\n**Next steps to unblock this:**\n- Confirm the Qualys API credentials in the MCP config are pointing at the right tenant\n- Verify at least one scan has run and assets appear in the Qualys UI under `Assets → All Assets`\n- If assets show in the UI but not here, the API account may need the `Reader` or `Manager` role in Qualys\n\nWant me to check the MCP configuration to see what endpoint/credentials are being used?\n",
+        "id": 130,
+        "question": "Are we meeting our patching SLA for critical vulns?",
+        "expected": "plan_remediation"
+      },
+      {
+        "passed": false,
+        "elapsed": 50.60786008834839,
+        "output": "Here is the gap analysis based on data from all three Qualys modules:\n\n---\n\n## Security Program Gap Analysis\n*Assessed: May 14, 2026 — 30-day window*\n\n---\n\n### Executive Summary\n\nThe Qualys environment is **provisioned but not operationally deployed**. Across every domain — asset inventory, vulnerability scanning, compliance, cloud, containers, and web applications — the platform is returning zero data. This represents a **critical program-level gap**: you have tooling but no visibility.\n\n---\n\n### Gap Inventory\n\n| Domain | Status | Severity | Gap Description |\n|---|---|---|---|\n| Asset Inventory | No assets discovered | **Critical** | 0 assets across all OS types and cloud providers |\n| Scanners | 0 online | **Critical** | No virtual/physical scanners deployed or connected |\n| Scheduled Scans | None configured | **Critical** | No recurring scan cadence established |\n| Vulnerability Management | No data | **Critical** | No VM scan results — exposure is fully blind |\n| Compliance (PC Module) | Not licensed / not configured | **High** | No frameworks (CIS, PCI DSS, HIPAA, SOC 2, NIST) assigned to assets |\n| Cloud Security | No connectors | **High** | AWS, Azure, GCP, and OCI accounts not connected to TotalCloud |\n| Container Security | Licensed, no agents | **High** | Module available but no container agents reporting data |\n| Web Application Scanning | No apps scanned | **High** | WAS module has no scan results |\n| Certificate Management | No certs tracked | **Medium** | CertView has no certificates — expiry risk is unmonitored |\n| SaaS Detection & Response | Not enabled | **Medium** | SaaS DR module not active on this subscription |\n| Vulnerability Exceptions | API unavailable | **Low** | Risk acceptance workflow not operational (may need add-on) |\n\n---\n\n### Root Cause\n\nAll gaps trace back to two foundational issues:\n\n1. **No scanners deployed** — Without scanners (virtual appliances, cloud agents, or external scanners), no assets can be discovered or assessed.\n2. ",
+        "id": 135,
+        "question": "Do a gap analysis on our security program",
+        "expected": "plan_remediation"
+      },
+      {
+        "passed": false,
+        "elapsed": 22.084814310073853,
+        "output": "No PCI DSS compliance data is currently available. Here's what the Qualys environment returned:\n\n**Status: No Data**\n\n- **Compliance posture:** 0 controls assessed — the Qualys **Policy Compliance (PC) module** is either not licensed or no compliance policies have been assigned to assets.\n- **Vulnerability exceptions:** The exceptions API is unavailable, which may require an additional Qualys subscription.\n- **Policies configured:** 0\n\n**To get PCI DSS compliance reporting, you'll need to:**\n\n1. Verify the **Qualys Policy Compliance (PC)** module is licensed for your subscription.\n2. Assign PCI DSS compliance policies to your asset groups in Qualys.\n3. Run compliance scans against those assets.\n\nIf you're using cloud infrastructure, the `assess_risk` tool with cloud context may surface CIS benchmark results as an alternative starting point. Would you like me to try that, or check a different framework?\n",
+        "id": 180,
+        "question": "What's our PCI DSS compliance status?",
+        "expected": "check_compliance"
+      },
+      {
+        "passed": false,
+        "elapsed": 34.10241889953613,
+        "output": "No ISO 27001 compliance data is available in your Qualys environment. Here's what the check found:\n\n**Root cause:** The **Qualys Policy Compliance (PC) module** is either not licensed or no compliance policies have been assigned to assets.\n\nSpecifically:\n- `0` compliance policies configured\n- `0` controls assessed (passing or failing)\n- `0` assets evaluated\n- Vulnerability exceptions API also unavailable (may require additional subscription)\n\n**To get ISO 27001 gap analysis, you have a few options:**\n\n1. **Enable Qualys PC module** — This is the primary path. Once licensed, you can import or create an ISO 27001 policy, assign it to asset groups, and run assessments to get pass/fail control data.\n\n2. **Use Qualys Cloud Security (CSAM/CIS)** — If your assets are cloud-based, cloud CIS compliance benchmarks are available and map partially to ISO 27001 controls. I can pull that data if relevant.\n\n3. **Check via VM data** — I can pull vulnerability findings and cross-map them to ISO 27001 Annex A controls (e.g., A.12.6 for patch management, A.13 for network security) as a proxy gap analysis.\n\nWould you like me to try one of the alternative approaches, or do you need guidance on enabling the PC module?\n",
+        "id": 185,
+        "question": "Show me our ISO 27001 compliance gaps",
+        "expected": "check_compliance"
+      },
+      {
+        "passed": true,
+        "elapsed": 22.178674697875977,
+        "output": "The Qualys Policy Compliance (PC) module is not licensed or no compliance policies are assigned to assets in this environment, so there's no compliance framework data available.\n\n**What this means:**\n- No compliance frameworks (PCI, HIPAA, SOC2, CIS, NIST, etc.) are configured\n- No controls have been assessed — pass/fail counts are all zero\n- No policy audit data exists\n\n**What you can do:**\n1. **Enable the PC module** — Contact Qualys support to license the Policy Compliance module for your subscription\n2. **Assign compliance policies to assets** — Once licensed, policies need to be linked to asset groups before controls will appear\n3. **Cloud CIS compliance** — If you're using cloud infrastructure, there may be cloud-specific CIS findings available via the risk assessment tools instead\n\nWould you like me to check the security risk overview or vulnerability findings as an alternative view of your security posture?\n",
+        "id": 190,
+        "question": "What are the top failing controls across all frameworks?",
+        "expected": "check_compliance"
+      },
+      {
+        "passed": false,
+        "elapsed": 35.91346716880798,
+        "output": "Error: Reached max turns (4)",
+        "id": 195,
+        "question": "How many active risk acceptances do we have?",
+        "expected": "check_compliance"
+      },
+      {
+        "passed": false,
+        "elapsed": 18.307308435440063,
+        "output": "## Morning Security Briefing — May 14, 2026\n\n**Risk Level: Unknown**\n\n---\n\n### Environment Snapshot\n\n| Category | Count |\n|---|---|\n| Total Assets | 0 |\n| Scanners Online | 0 |\n| Active / Queued Scans | 0 |\n| Scan Errors | 0 |\n\n**Asset Breakdown:** No assets discovered (Windows: 0, Linux: 0, macOS: 0)  \n**Cloud Coverage:** AWS: 0 · Azure: 0 · GCP: 0 · On-Prem: 0  \n**EOL Assets:** 0 OS · 0 Hardware  \n\n---\n\n### Scanner Health\n\nNo scanners are currently registered or online. No scans are running, queued, or scheduled.\n\n---\n\n### Gaps Detected\n\n**Compliance frameworks not configured** — regulatory risk is unassessed against CIS, PCI DSS, HIPAA, SOC 2, or NIST. Ask me to `check_compliance` once assets are onboarded.\n\n---\n\n### Summary\n\nYour Qualys environment appears to be **empty or not yet fully configured** — no assets, scanners, or scans are registered. To get meaningful security data:\n\n1. **Register scanners** (virtual or physical) in your Qualys subscription\n2. **Onboard assets** via agent deployment or network scanning\n3. **Schedule scans** against your asset groups\n4. **Configure compliance frameworks** for regulatory coverage\n\nOnce assets are populated, I can give you a full briefing with vulnerability trends, top risky hosts, and remediation priorities.\n",
+        "id": 240,
+        "question": "Give me my morning security briefing",
+        "expected": "security_overview"
+      },
+      {
+        "passed": false,
+        "elapsed": 22.53239369392395,
+        "output": "## Daily Security Digest — May 14, 2026\n\n**Risk Level:** Unknown\n\n---\n\n### Asset Inventory\n| Category | Count |\n|---|---|\n| Total Assets | 0 |\n| Windows / Linux / macOS | 0 / 0 / 0 |\n| AWS / Azure / GCP / On-Prem | 0 / 0 / 0 / 0 |\n| EOL OS / EOL Hardware | 0 / 0 |\n| High-Criticality Assets | 0 |\n\n### Scanner Health\n- **Scanners Online:** 0\n- **Scanners Offline:** 0\n- **Scans Running / Queued / Errors:** 0 / 0 / 0\n- **Scheduled Scans:** None found\n\n### Findings\nNo vulnerability findings to report.\n\n---\n\n**Note:** The Qualys environment is returning zero assets and no active scanners. This likely means:\n- No assets have been onboarded/inventoried yet\n- Scanners haven't been deployed or configured\n- The API credentials may be scoped to an empty subscription or sub-account\n\n**Recommended next steps:**\n1. Verify scanner deployment and connectivity\n2. Onboard assets (agents, network scanners, or cloud connectors)\n3. Consider configuring compliance frameworks (CIS, PCI DSS, HIPAA, SOC 2) — currently unassessed\n",
+        "id": 245,
+        "question": "Give me the daily security digest",
+        "expected": "security_overview"
+      },
+      {
+        "passed": true,
+        "elapsed": 20.345622301101685,
+        "output": "The weekly risk trend data came back with no assets detected — the Qualys environment appears to have no assets enrolled or scanned yet. Here's what the data shows:\n\n**Weekly Risk Trends — Week of May 14, 2026**\n\n| Category | Count |\n|---|---|\n| Total Assets | 0 |\n| Windows / Linux / macOS | 0 / 0 / 0 |\n| AWS / Azure / GCP / On-Prem | 0 / 0 / 0 / 0 |\n| EOL OS / Hardware | 0 / 0 |\n| High Criticality Assets | 0 |\n| Scanners Online | 0 |\n\n**Risk Level:** Unknown\n\n**What this likely means:**\n- No assets have been discovered or ingested into Qualys yet\n- No scanners are currently online/configured\n- No scan data exists to trend against\n\n**Recommended next steps:**\n1. **Deploy scanners** — Set up Qualys Cloud Agents or Virtual Scanners to start discovering assets\n2. **Run a discovery scan** — Kick off an asset discovery to populate the inventory\n3. **Configure compliance frameworks** — Once assets are enrolled, frameworks like CIS, PCI DSS, HIPAA, or SOC 2 can be applied\n\nOnce assets and scans are in place, I can show you trending data on TruRisk scores, new vs. remediated vulnerabilities, and severity breakdowns week-over-week.\n",
+        "id": 250,
+        "question": "Show me weekly risk trends",
+        "expected": "security_overview"
+      },
+      {
+        "passed": false,
+        "elapsed": 25.60107398033142,
+        "output": "The overview data came back, but the environment appears to have no assets or scanners configured yet. Here's what the data shows:\n\n---\n\n## Monthly Security Summary — May 2026\n\n**Reporting Period:** May 2026\n**Risk Level:** Unknown\n\n---\n\n### Asset Inventory\n\n| Category | Count |\n|---|---|\n| Total Assets | 0 |\n| Windows | 0 |\n| Linux | 0 |\n| macOS | 0 |\n| AWS | 0 |\n| Azure | 0 |\n| GCP | 0 |\n| On-Premises | 0 |\n| EOL OS | 0 |\n| EOL Hardware | 0 |\n| High-Criticality Assets | 0 |\n\n### Scanner Health\n\n- **Scanners Online:** 0\n- **Scanners Offline:** 0\n- **Scans Running/Queued/Errors:** 0 / 0 / 0\n- **Scheduled Scans:** None configured\n\n### Key Gap Identified\n\n> **Compliance Frameworks Not Configured** — No compliance framework (CIS, PCI DSS, HIPAA, SOC 2) has been set up, leaving regulatory risk unassessed.\n\n---\n\n### What This Means\n\nThe Qualys environment is returning **zero assets across all categories**, which indicates one of the following:\n\n1. **Qualys has not yet been connected to the environment** — scanners and asset groups need to be configured.\n2. **API credentials lack sufficient scope** — the connected account may not have read access to asset/scan data.\n3. **No scans have been run yet** — the platform is newly provisioned.\n\nTo generate a meaningful leadership summary, the next step is to verify scanner deployment and asset group configuration in Qualys. Would you like help diagnosing the connection or setting up a scan?\n",
+        "id": 255,
+        "question": "Give me the monthly security summary for leadership",
+        "expected": "security_overview"
+      }
+    ]
+  },
+  "phase2": {
+    "total": 30,
+    "passed": 30,
+    "results": [
+      {"passed": true, "elapsed": 0.9370999336242676, "risk_level": null, "output_len": 851, "id": 27, "question": "what vulns are linked to Salt Typhoon?", "workflow": "investigate", "kwargs": {"target": "Salt Typhoon", "depth": "quick"}},
+      {"passed": true, "elapsed": 10.673553705215454, "risk_level": null, "output_len": 1213, "id": 138, "question": "Give me recommendations to improve our security posture", "workflow": "plan_remediation", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 3.2572641372680664, "risk_level": null, "output_len": 3346, "id": 45, "question": "What vulnerabilities exist on our domain controllers?", "workflow": "investigate", "kwargs": {"target": "domain controllers", "depth": "quick"}},
+      {"passed": true, "elapsed": 5.226889133453369, "risk_level": null, "output_len": 4457, "id": 396, "question": "How many AWS Workspaces are in our environment?", "workflow": "investigate", "kwargs": {"target": "aws workspace", "depth": "standard"}},
+      {"passed": true, "elapsed": 4.384536981582642, "risk_level": null, "output_len": 1264, "id": 209, "question": "Are any of our PCI systems out of compliance right now?", "workflow": "check_compliance", "kwargs": {}},
+      {"passed": true, "elapsed": 9.6845703125, "risk_level": null, "output_len": 1212, "id": 137, "question": "How can we reduce our TruRisk score the fastest?", "workflow": "plan_remediation", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 0.6546139717102051, "risk_level": null, "output_len": 924, "id": 56, "question": "Show me any ransomware indicators from EDR", "workflow": "investigate", "kwargs": {"target": "ransomware indicators", "depth": "quick"}},
+      {"passed": true, "elapsed": 2.6827919483184814, "risk_level": null, "output_len": 3088, "id": 20, "question": "How exposed are we to Java deserialization vulns?", "workflow": "investigate", "kwargs": {"target": "Java deserialization", "depth": "quick"}},
+      {"passed": true, "elapsed": 4.152819633483887, "risk_level": null, "output_len": 1264, "id": 195, "question": "How many active risk acceptances do we have?", "workflow": "check_compliance", "kwargs": {}},
+      {"passed": true, "elapsed": 2.169534683227539, "risk_level": null, "output_len": 2325, "id": 275, "question": "Give me a full security briefing with all the details", "workflow": "security_overview", "kwargs": {}},
+      {"passed": true, "elapsed": 6.136888265609741, "risk_level": null, "output_len": 2325, "id": 288, "question": "Which scanner is handling the most load right now?", "workflow": "security_overview", "kwargs": {}},
+      {"passed": true, "elapsed": 9.438957929611206, "risk_level": null, "output_len": 1212, "id": 171, "question": "What recommendations do you have for our vulnerability management program?", "workflow": "plan_remediation", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 9.91685438156128, "risk_level": null, "output_len": 1212, "id": 175, "question": "Plan remediation for our internet-facing assets first", "workflow": "plan_remediation", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 9.739218950271606, "risk_level": null, "output_len": 3768, "id": 82, "question": "Check for container escape risks in our Kubernetes clusters", "workflow": "assess_risk", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 10.057454586029053, "risk_level": null, "output_len": 3769, "id": 70, "question": "hey what's going on with our cloud security", "workflow": "assess_risk", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 10.423252582550049, "risk_level": null, "output_len": 1213, "id": 173, "question": "What's our automated vs manual patching ratio?", "workflow": "plan_remediation", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 9.313546657562256, "risk_level": null, "output_len": 1264, "id": 362, "question": "Do we meet the CISA KEV May 8, 2026 remediation deadline for SimpleHelp CVE-2024-57726 and Samsung MagicINFO? I need to report to leadership", "workflow": "check_compliance", "kwargs": {}},
+      {"passed": true, "elapsed": 9.840813636779785, "risk_level": null, "output_len": 1212, "id": 126, "question": "How many high severity patches are outstanding?", "workflow": "plan_remediation", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 12.008123397827148, "risk_level": null, "output_len": 3769, "id": 84, "question": "Show me container vulnerabilities by severity", "workflow": "assess_risk", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 0.8277759552001953, "risk_level": null, "output_len": 868, "id": 1, "question": "Tell me everything about CVE-2024-3400 and our exposure", "workflow": "investigate", "kwargs": {"target": "CVE-2024-3400", "depth": "quick"}},
+      {"passed": true, "elapsed": 3.805540084838867, "risk_level": null, "output_len": 1264, "id": 224, "question": "Can you show me which NIST control families we're weakest in?", "workflow": "check_compliance", "kwargs": {}},
+      {"passed": true, "elapsed": 5.196283578872681, "risk_level": null, "output_len": 3950, "id": 399, "question": "Show Virtual Machine Scale Sets across our Azure environment", "workflow": "investigate", "kwargs": {"target": "vm scale set", "depth": "standard"}},
+      {"passed": true, "elapsed": 2.90399169921875, "risk_level": null, "output_len": 3025, "id": 306, "question": "Are we exposed to the Qilin ransomware BYOVD technique that's being used to kill EDR tools before encryption?", "workflow": "investigate", "kwargs": {"target": "Qilin BYOVD", "depth": "quick"}},
+      {"passed": true, "elapsed": 6.5771706104278564, "risk_level": null, "output_len": 1264, "id": 194, "question": "Show me controls that are failing across multiple compliance frameworks", "workflow": "check_compliance", "kwargs": {}},
+      {"passed": true, "elapsed": 1.134361743927002, "risk_level": null, "output_len": 827, "id": 36, "question": "Are we vulnerable to Kimsuky spear-phishing related CVEs?", "workflow": "investigate", "kwargs": {"target": "Kimsuky", "depth": "quick"}},
+      {"passed": true, "elapsed": 0.7502219676971436, "risk_level": null, "output_len": 875, "id": 4, "question": "Investigate CVE-2023-34362 — are we exposed to MOVEit?", "workflow": "investigate", "kwargs": {"target": "CVE-2023-34362", "depth": "quick"}},
+      {"passed": true, "elapsed": 9.511804819107056, "risk_level": null, "output_len": 1212, "id": 162, "question": "Create a patching roadmap for Q2", "workflow": "plan_remediation", "kwargs": {"scope": "all"}},
+      {"passed": true, "elapsed": 0.6812281608581543, "risk_level": null, "output_len": 875, "id": 377, "question": "Is CVE-2026-23918 in Apache HTTP Server affecting us?", "workflow": "investigate", "kwargs": {"target": "CVE-2026-23918", "depth": "quick"}},
+      {"passed": true, "elapsed": 14.219603061676025, "risk_level": null, "output_len": 1265, "id": 230, "question": "What false positive rate do we have in our compliance scans?", "workflow": "check_compliance", "kwargs": {}},
+      {"passed": true, "elapsed": 2.74277663230896, "risk_level": null, "output_len": 3074, "id": 53, "question": "Any FIM events on critical system paths like /etc/passwd?", "workflow": "investigate", "kwargs": {"target": "FIM critical paths", "depth": "quick"}}
+    ]
+  },
+  "previous_pass_rate": 74.6268656716418,
+  "regressions": [],
+  "data_accuracy": {
+    "Total assets": {"value": 0, "min": 50000, "max": null, "pass": false},
+    "Container images": {"value": null, "min": 100, "max": null, "pass": null},
+    "Cloud accounts": {"value": null, "min": 29, "max": null, "pass": null},
+    "Compliance pass rate": {"value": null, "min": 20, "max": 100, "pass": null},
+    "Patch coverage": {"value": null, "min": 50, "max": 100, "pass": null},
+    "TotalAI detections": {"value": null, "min": 100, "max": null, "pass": null},
+    "WAS findings": {"value": null, "min": 1000, "max": null, "pass": null}
+  }
+}
