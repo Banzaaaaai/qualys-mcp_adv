@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Complete inventory of known Qualys API endpoints. Used for gap analysis against api.py.",
-    "lastUpdated": "2026-05-12",
+    "lastUpdated": "2026-05-14",
     "sources": "Qualys docs crawl + manual verification + release notes + US2 live testing"
   },
   "modules": {
@@ -243,7 +243,7 @@
           "method": "GET",
           "path": "/cloudview-api/rest/v1/{provider}/evaluations/resources",
           "status": "implemented",
-          "description": "Evaluation resources v1"
+          "description": "Evaluation resources v1 — new fields: uuid, criticality, controlName (TC 2.24)"
         },
         {
           "method": "GET",
