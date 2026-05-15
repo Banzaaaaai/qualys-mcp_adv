@@ -71,7 +71,8 @@ def run_claude_headless(question: str, timeout: int = 120) -> dict:
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
-            env={**os.environ}
+            env={**os.environ},
+            cwd="/tmp",  # neutral dir: avoids git-context noise consuming turns
         )
         elapsed = time.time() - t0
         output = result.stdout + result.stderr
