@@ -6369,3 +6369,201 @@ def nsx_auth_agg(limit: int = 50, detail: str = 'standard') -> dict:
         'summary': f"{len(records)} NSX authentication record(s) configured",
     }
     return _apply_detail_level(_with_meta(result, 'records', len(records)), detail, list_keys=['records'])
+
+
+# ---------------------------------------------------------------------------
+# manage_scan_agg — scan lifecycle management
+# ---------------------------------------------------------------------------
+
+def _scan_post(action: str, scan_ref: str = "", extra_params: dict = None) -> dict:
+    """POST to /api/2.0/fo/scan/ with action and optional params, return parsed result."""
+    params = {'action': action}
+    if scan_ref:
+        params['scan_ref'] = scan_ref
+    if extra_params:
+        params.update(extra_params)
+    post_data = urlencode(params).encode()
+    req = Request(f"{BASE_URL}/api/2.0/fo/scan/", data=post_data, method='POST')
+    req.add_header('Authorization', f'Basic {BASIC_AUTH}')
+    req.add_header('X-Requested-With', 'qualys-mcp')
+    try:
+        with _open(req, timeout=60) as resp:
+            body = resp.read()
+    except HTTPError as e:
+        body = e.read() if hasattr(e, 'read') else b''
+        _log(f"Scan {action} error {e.code}")
+        return compact({'error': f'API error {e.code}', 'detail': body.decode(errors='replace')[:500]})
+    except Exception as e:
+        return compact({'error': str(e)})
+    try:
+        root = ET.fromstring(body)
+        text = root.findtext('.//TEXT', '') or root.findtext('.//RESPONSE/TEXT', '')
+        # Extract scan_ref from launch response
+        ref = ''
+        for item in root.findall('.//ITEM'):
+            if item.findtext('KEY', '') in ('ID', 'SCAN_REF', 'REF'):
+                ref = item.findtext('VALUE', '')
+                break
+        if not ref:
+            ref = root.findtext('.//SCAN_REF', '') or root.findtext('.//REF', '')
+        result = {'action': action, 'message': text}
+        if ref:
+            result['scan_ref'] = ref
+        return compact(result)
+    except ET.ParseError:
+        return compact({'action': action, 'raw': body.decode(errors='replace')[:500]})
+
+
+def manage_scan_agg(action: str, scan_ref: str = "", scan_title: str = "",
+                    ip: str = "", asset_group_ids: str = "",
+                    option_title: str = "", option_id: str = "",
+                    scanner_name: str = "", tag_include_selector: str = "",
+                    tag_exclude_selector: str = "",
+                    states: str = "Running,Paused,Queued,Error,Finished",
+                    limit: int = 50) -> dict:
+    """Scan lifecycle management — list, launch, pause, resume, cancel, delete, status, fetch_results."""
+    action = action.strip().lower()
+
+    # ------------------------------------------------------------------ list
+    if action == 'list':
+        scans = get_scan_list(states=states, limit=limit)
+        by_state = {}
+        for s in scans:
+            st = s.get('state', 'Unknown')
+            by_state[st] = by_state.get(st, 0) + 1
+        summary_parts = [f"{v} {k}" for k, v in sorted(by_state.items())]
+        result = {
+            'scans': scans,
+            'total': len(scans),
+            'byState': by_state,
+            'summary': ', '.join(summary_parts) if summary_parts else 'No scans found',
+        }
+        return compact(_with_meta(result, 'scans', len(scans)))
+
+    # --------------------------------------------------------------- status
+    if action == 'status':
+        if not scan_ref:
+            return compact({'error': "scan_ref is required for action='status'"})
+        data = api_get(f"{BASE_URL}/api/2.0/fo/scan/?action=list&scan_ref={scan_ref}&show_status=1", timeout=30)
+        if not data:
+            return compact({'error': 'Failed to fetch scan status', 'scan_ref': scan_ref})
+        try:
+            root = ET.fromstring(data)
+            s = root.find('.//SCAN')
+            if s is None:
+                return compact({'error': f'Scan {scan_ref} not found'})
+            scan = {
+                'ref': s.findtext('REF', ''),
+                'title': s.findtext('TITLE', ''),
+                'state': s.findtext('STATUS/STATE', ''),
+                'subState': s.findtext('STATUS/SUB_STATE', ''),
+                'type': s.findtext('TYPE', ''),
+                'target': s.findtext('TARGET', '')[:200] if s.findtext('TARGET', '') else '',
+                'launched': s.findtext('LAUNCH_DATETIME', ''),
+                'duration': s.findtext('DURATION', ''),
+                'scannerName': s.findtext('SCANNER_APPLIANCE/FRIENDLY_NAME', ''),
+                'processed': s.findtext('PROCESSED', ''),
+            }
+            return compact({'scan': scan, '_meta': {'returned': 1, 'total': 1, 'truncated': False}})
+        except ET.ParseError:
+            return compact({'error': 'Failed to parse scan status XML', 'scan_ref': scan_ref})
+
+    # --------------------------------------------------------- list_scanners
+    if action == 'list_scanners':
+        scanners = get_scanner_list()
+        active = sum(1 for s in scanners if s.get('status', '').upper() == 'CONNECTED')
+        result = {
+            'scanners': scanners[:limit],
+            'total': len(scanners),
+            'connected': active,
+            'summary': f"{len(scanners)} scanner appliance(s), {active} connected",
+        }
+        return compact(_with_meta(result, 'scanners', len(scanners)))
+
+    # -------------------------------------------------------- list_scheduled
+    if action == 'list_scheduled':
+        scans = get_scheduled_scans(limit=limit)
+        active = sum(1 for s in scans if s.get('active'))
+        result = {
+            'scans': scans[:limit],
+            'total': len(scans),
+            'active': active,
+            'summary': f"{len(scans)} scheduled scan(s), {active} active",
+        }
+        return compact(_with_meta(result, 'scans', len(scans)))
+
+    # --------------------------------------------------------- fetch_results
+    if action == 'fetch_results':
+        if not scan_ref:
+            return compact({'error': "scan_ref is required for action='fetch_results'"})
+        data = api_get(
+            f"{BASE_URL}/api/2.0/fo/scan/?action=fetch&scan_ref={scan_ref}&output_format=json_extended",
+            timeout=60,
+        )
+        if not data:
+            # Fallback: try default XML
+            data = api_get(f"{BASE_URL}/api/2.0/fo/scan/?action=fetch&scan_ref={scan_ref}", timeout=60)
+            if not data:
+                return compact({'error': f'Failed to fetch results for scan {scan_ref}'})
+            try:
+                root = ET.fromstring(data)
+                hosts = []
+                for h in root.findall('.//HOST')[:limit]:
+                    hosts.append({
+                        'ip': h.findtext('IP', ''),
+                        'hostname': h.findtext('DNS', '') or h.findtext('NETBIOS', ''),
+                        'os': h.findtext('OS', ''),
+                        'vulnCount': len(h.findall('.//VULN')),
+                    })
+                return compact({
+                    'scan_ref': scan_ref,
+                    'hosts': hosts,
+                    'hostCount': len(hosts),
+                    '_meta': {'returned': len(hosts), 'total': len(hosts), 'truncated': len(hosts) >= limit},
+                })
+            except ET.ParseError:
+                return compact({'error': 'Failed to parse scan results XML', 'scan_ref': scan_ref})
+        try:
+            parsed = json.loads(data)
+            return compact({
+                'scan_ref': scan_ref,
+                'results': parsed,
+                '_meta': {'returned': 1, 'total': 1, 'truncated': False},
+            })
+        except (json.JSONDecodeError, TypeError):
+            return compact({'error': 'Failed to parse scan results JSON', 'scan_ref': scan_ref})
+
+    # ---------------------------------------------------------------- launch
+    if action == 'launch':
+        if not scan_title:
+            return compact({'error': "scan_title is required for action='launch'"})
+        if not ip and not asset_group_ids and not tag_include_selector:
+            return compact({'error': "One of ip, asset_group_ids, or tag_include_selector is required for action='launch'"})
+        if not option_title and not option_id:
+            return compact({'error': "One of option_title or option_id is required for action='launch'"})
+        params = {'scan_title': scan_title}
+        if ip:
+            params['ip'] = ip
+        if asset_group_ids:
+            params['asset_group_ids'] = asset_group_ids
+        if option_title:
+            params['option_title'] = option_title
+        if option_id:
+            params['option_id'] = option_id
+        if scanner_name:
+            params['iscanner_name'] = scanner_name
+        else:
+            params['scanners_in_ag'] = '1'
+        if tag_include_selector:
+            params['tag_include_selector'] = tag_include_selector
+        if tag_exclude_selector:
+            params['tag_exclude_selector'] = tag_exclude_selector
+        return _scan_post('launch', extra_params=params)
+
+    # ------------------------------------------------- pause / resume / cancel / delete
+    if action in ('pause', 'resume', 'cancel', 'delete'):
+        if not scan_ref:
+            return compact({'error': f"scan_ref is required for action='{action}'"})
+        return _scan_post(action, scan_ref=scan_ref)
+
+    return compact({'error': f"Unknown action '{action}'. Valid actions: list, status, list_scanners, list_scheduled, fetch_results, launch, pause, resume, cancel, delete"})

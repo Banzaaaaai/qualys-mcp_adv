@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualys MCP Server v3 — 5 analytical workflow tools + 2 utility tools."""
+"""Qualys MCP Server v3 — 5 analytical workflow tools + 3 utility tools."""
 
 import asyncio
 from threading import Thread
@@ -10,7 +10,7 @@ from qualys.workflows.assess_risk import assess_risk as assess_risk_wf
 from qualys.workflows.compliance import check_compliance as check_compliance_wf
 from qualys.workflows.remediation import plan_remediation as plan_remediation_wf
 from qualys.workflows.overview import security_overview as security_overview_wf
-from qualys.aggregators import reports_agg, cache_status_agg
+from qualys.aggregators import reports_agg, cache_status_agg, manage_scan_agg
 
 mcp = FastMCP("qualys-mcp")
 
@@ -212,6 +212,43 @@ async def reports(action: str, report_id: str = "", template_id: str = "",
 
 
 @mcp.tool()
+async def manage_scan(action: str, scan_ref: str = "", scan_title: str = "",
+                      ip: str = "", asset_group_ids: str = "",
+                      option_title: str = "", option_id: str = "",
+                      scanner_name: str = "", tag_include_selector: str = "",
+                      tag_exclude_selector: str = "",
+                      states: str = "Running,Paused,Queued,Error,Finished",
+                      limit: int = 50) -> dict:
+    """[Scans] Scan lifecycle management — list, launch, pause, resume, cancel, delete, status, results. @slow
+
+    USE WHEN: "what scans are running?", "launch a scan on 10.0.0.0/24", "pause scan scan/12345.67890",
+    "cancel that scan", "show scan results", "list my scanner appliances", "what scheduled scans exist?"
+
+    Parameters:
+        action: "list" | "status" | "list_scanners" | "list_scheduled" | "fetch_results"
+                | "launch" | "pause" | "resume" | "cancel" | "delete"
+        scan_ref: scan reference e.g. "scan/12345.67890" — required for status/fetch_results/pause/resume/cancel/delete
+        scan_title: title for new scan (launch)
+        ip: IPs or CIDR ranges to scan, comma-separated (launch)
+        asset_group_ids: asset group IDs, comma-separated (launch)
+        option_title: scan option profile title (launch)
+        option_id: scan option profile ID (launch)
+        scanner_name: scanner appliance name (launch; omit to use scanners in asset group)
+        tag_include_selector: include only assets with this tag (launch)
+        tag_exclude_selector: exclude assets with this tag (launch)
+        states: comma-separated state filter for list (default "Running,Paused,Queued,Error,Finished")
+        limit: max results (default 50)
+
+    Returns: structured dict with action result and _meta."""
+    return await asyncio.to_thread(manage_scan_agg, action=action, scan_ref=scan_ref,
+                                   scan_title=scan_title, ip=ip, asset_group_ids=asset_group_ids,
+                                   option_title=option_title, option_id=option_id,
+                                   scanner_name=scanner_name, tag_include_selector=tag_include_selector,
+                                   tag_exclude_selector=tag_exclude_selector,
+                                   states=states, limit=limit)
+
+
+@mcp.tool()
 async def cache_status(clear: bool = False) -> dict:
     """[Admin] Show cache stats or clear all caches.
 
@@ -231,7 +268,7 @@ def main():
         _log(f"qualys-mcp v0.2.4 — POD={_resolved_pod}  BASE_URL={BASE_URL}  GATEWAY_URL={GATEWAY_URL}")
     else:
         _log(f"qualys-mcp v0.2.4 — BASE_URL={BASE_URL}  GATEWAY_URL={GATEWAY_URL}")
-    _log("7 tools: investigate, assess_risk, check_compliance, plan_remediation, security_overview, reports, cache_status")
+    _log("8 tools: investigate, assess_risk, check_compliance, plan_remediation, security_overview, reports, manage_scan, cache_status")
     warmup = Thread(target=_warmup_vmdr_cache, daemon=True, name="vmdr-cache-warmup")
     warmup.start()
     mcp.run()
