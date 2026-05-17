@@ -2,11 +2,15 @@
 
 > ⚠️ **Unofficial project.** This is a personal project to showcase the viability of connecting AI assistants to Qualys via the Model Context Protocol. It is not affiliated with, endorsed by, or supported by Qualys, Inc.
 
-An MCP server that connects AI assistants to Qualys security data. **7 workflow tools** covering vulnerability management, cloud security, containers, compliance, remediation, and more. Pure Python, zero config beyond credentials.
+An MCP server that connects AI assistants to Qualys security data. **8 tools** covering vulnerability management, cloud security, containers, compliance, remediation, and more. Pure Python, zero config beyond credentials.
+
+Works with **Claude Desktop** (local stdio) and **Claude.ai** (remote SSE + OAuth 2.0).
 
 **📖 [Full documentation →](https://qualys-mcp.netlify.app/)**
 
 ## Setup
+
+### Claude Desktop (local)
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -26,28 +30,62 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Set `QUALYS_POD` to your platform POD — the server derives the correct API and gateway URLs automatically.
+Requires [uv](https://docs.astral.sh/uv/): `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+### Claude.ai (remote / internet)
+
+Run the server with SSE transport and OAuth 2.0:
+
+```bash
+MCP_TRANSPORT=sse \
+MCP_BASE_URL=https://qualys-mcp.example.com \
+MCP_OAUTH_PIN=your-secret-pin \
+MCP_PORT=8000 \
+QUALYS_USERNAME=your-username \
+QUALYS_PASSWORD=your-password \
+QUALYS_POD=US2 \
+qualys-mcp
+```
+
+Then in Claude.ai → **Settings → Integrations** → add your server URL:
+
+```
+https://qualys-mcp.example.com/sse
+```
+
+Claude.ai will open a browser authorization page — enter your `MCP_OAUTH_PIN` to grant access. The issued token is valid for one year; you won't need to re-authorize on every session.
+
+> **TLS required.** Put a reverse proxy (Caddy, nginx) or Cloudflare Tunnel in front. `MCP_BASE_URL` must be the public `https://` address — OAuth metadata URLs won't work over plain HTTP.
+
+#### SSE environment variables
+
+| Variable | Required | Default | Description |
+| -------- | -------- | ------- | ----------- |
+| `MCP_TRANSPORT` | yes | `stdio` | Set to `sse` to enable remote mode |
+| `MCP_BASE_URL` | yes | — | Public HTTPS URL of this server |
+| `MCP_OAUTH_PIN` | yes | — | PIN entered during browser authorization |
+| `MCP_HOST` | no | `0.0.0.0` | Bind address |
+| `MCP_PORT` | no | `8000` | Listen port |
+
+### Common options
 
 **Supported pods:** `US1` `US2` `US3` `US4` `EU1` `EU2` `EU3` `IN1` `CA1` `AE1` `UK1` `AU1` `KSA1`
 
+Set `QUALYS_POD` to your platform POD — the server derives the correct API and gateway URLs automatically.
+
 > **Advanced:** If you need to override the auto-derived URLs, set `QUALYS_BASE_URL` and `QUALYS_GATEWAY_URL` explicitly instead of `QUALYS_POD`. Explicit URLs take priority.
+> **Self-signed certificates:** Add `QUALYS_SSL_VERIFY=false` to the env block.
 
-Requires [uv](https://docs.astral.sh/uv/): `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
-
-### Alternative
+### pip alternative
 
 ```bash
 pip install qualys-mcp
 qualys-mcp
 ```
 
-### Self-Signed Certificates
-
-For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to the env block.
-
 ## Tools
 
-7 workflow tools that intelligently dispatch to 42 internal aggregators across all Qualys modules. Each tool handles routing, concurrent API calls, cross-domain correlation, and response synthesis automatically.
+8 tools that intelligently dispatch to 42 internal aggregators across all Qualys modules. Each tool handles routing, concurrent API calls, cross-domain correlation, and response synthesis automatically.
 
 | Tool | What it answers |
 |------|----------------|
@@ -57,6 +95,7 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 | `plan_remediation` | Patch priorities, deployment status, mitigation coverage, program gap analysis |
 | `security_overview` | Daily/weekly/monthly briefing — scanner health, scan status, vulnerability findings |
 | `reports` | Generate, list, download, and manage Qualys reports |
+| `manage_scan` | Scan lifecycle — list, launch, pause, resume, cancel, delete, results |
 | `cache_status` | View and clear API caches |
 
 ### Key Parameters
@@ -84,6 +123,12 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 **security_overview**
 - `period` — `today` / `week` / `month`
 - `quick` — fast snapshot (~2s) vs full briefing
+
+#### manage_scan
+
+- `action` — `list` / `launch` / `pause` / `resume` / `cancel` / `delete` / `status` / `fetch_results`
+- `ip` — IPs or CIDR ranges (launch)
+- `scan_ref` — scan reference e.g. `scan/12345.67890`
 
 ## Example Conversations
 
@@ -120,6 +165,15 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 "What security gaps do we have?"               → plan_remediation(scope="program")
 ```
 
+### Scan Management
+
+```
+"What scans are running?"                      → manage_scan(action="list")
+"Launch a scan on 10.0.0.0/24"                → manage_scan(action="launch", ip="10.0.0.0/24")
+"Pause scan scan/12345.67890"                  → manage_scan(action="pause", scan_ref="scan/12345.67890")
+"Show me scan results"                         → manage_scan(action="fetch_results", scan_ref="...")
+```
+
 ### Multi-Step Workflows
 ```
 "New critical CVE dropped — what do I need to know?"
@@ -135,8 +189,13 @@ For environments with self-signed certs, add `"QUALYS_SSL_VERIFY": "false"` to t
 ## Architecture
 
 ```
-AI Assistant → qualys_mcp.py (7 tools) → workflows/ (dispatch + synthesis) → aggregators.py (42 functions) → api.py (HTTP + caching) → Qualys APIs
+AI Assistant → qualys_mcp.py (8 tools) → workflows/ (dispatch + synthesis) → aggregators.py (42 functions) → api.py (HTTP + caching) → Qualys APIs
 ```
+
+### Transports
+
+- `stdio` — Claude Desktop, local use, spawned as a subprocess
+- `sse` — Claude.ai and any remote MCP client; OAuth 2.0 authorization code + PKCE flow, dynamic client registration
 
 Each workflow tool:
 1. Builds a dispatch plan based on parameters

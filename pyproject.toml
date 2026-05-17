@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qualys-mcp"
-version = "0.2.4"
-description = "MCP server for Qualys security APIs - natural language interaction with vulnerability, asset, and cloud security data"
+version = "0.3.0"
+description = "MCP server connecting AI assistants to Qualys security data. Supports Claude Desktop (stdio) and Claude.ai (SSE + OAuth 2.0). 8 tools covering vulnerabilities, cloud, compliance, and remediation."
 readme = "README.md"
 license = "MIT"
 authors = [
