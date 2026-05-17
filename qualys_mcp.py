@@ -2,6 +2,7 @@
 """Qualys MCP Server v3 — 5 analytical workflow tools + 3 utility tools."""
 
 import asyncio
+import os
 from threading import Thread
 from fastmcp import FastMCP
 from qualys.api import BASE_URL, GATEWAY_URL, _resolved_pod, _log, _warmup_vmdr_cache
@@ -269,9 +270,41 @@ def main():
     else:
         _log(f"qualys-mcp v0.2.4 — BASE_URL={BASE_URL}  GATEWAY_URL={GATEWAY_URL}")
     _log("8 tools: investigate, assess_risk, check_compliance, plan_remediation, security_overview, reports, manage_scan, cache_status")
+
     warmup = Thread(target=_warmup_vmdr_cache, daemon=True, name="vmdr-cache-warmup")
     warmup.start()
-    mcp.run()
+
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
+
+    if transport == "sse":
+        host = os.environ.get("MCP_HOST", "0.0.0.0")
+        port = int(os.environ.get("MCP_PORT", "8000"))
+
+        base_url = os.environ.get("MCP_BASE_URL", "").strip()
+        if not base_url:
+            raise EnvironmentError(
+                "MCP_BASE_URL must be set to the public HTTPS URL of this server "
+                "(e.g. MCP_BASE_URL=https://qualys-mcp.example.com). "
+                "Claude.ai uses it to build OAuth metadata and callback URLs."
+            )
+
+        pin = os.environ.get("MCP_OAUTH_PIN", "").strip()
+        if not pin:
+            raise EnvironmentError(
+                "MCP_OAUTH_PIN must be set. You will enter this PIN in your browser "
+                "when Claude.ai asks you to authorize access."
+            )
+
+        from qualys.oauth import PersonalOAuthProvider
+        provider = PersonalOAuthProvider(base_url=base_url, pin=pin)
+        mcp.auth = provider
+        mcp._additional_http_routes.append(provider.build_authorize_route())
+
+        _log(f"OAuth authorization server at {base_url}")
+        _log(f"SSE transport on {host}:{port}")
+        mcp.run(transport="sse", host=host, port=port)
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":
